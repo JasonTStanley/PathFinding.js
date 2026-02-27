@@ -41,9 +41,9 @@ function pathTest(opt) {
             grid = new PF.Grid(width, height, matrix);
 
             test(
-                scen.startX, scen.startY, 
-                scen.endX, scen.endY, 
-                grid, 
+                scen.startX, scen.startY,
+                scen.endX, scen.endY,
+                grid,
                 scen.expectedLength
             );
         }
@@ -86,6 +86,10 @@ pathTests({
     finder: new PF.BiAStarFinder(),
     optimal: false
 }, {
+    name: 'BubbleStar',
+    finder: new PF.BubbleStarFinder(),
+    optimal: false
+},{
     name: 'BestFirst',
     finder: new PF.BestFirstFinder(),
     optimal: false
