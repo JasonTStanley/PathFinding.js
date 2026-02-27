@@ -26,12 +26,12 @@ var Panel = {
      */
     getFinder: function() {
         var finder, selected_header, heuristic, allowDiagonal, biDirectional, dontCrossCorners, weight, trackRecursion, timeLimit;
-        
+
         selected_header = $(
             '#algorithm_panel ' +
             '.ui-accordion-header[aria-selected=true]'
         ).attr('id');
-        
+
         switch (selected_header) {
 
         case 'astar_header':
@@ -106,6 +106,20 @@ var Panel = {
                 });
             }
             break;
+        case 'bubble_star_header':
+            allowDiagonal = typeof $('#bubble_star_section .allow_diagonal:checked').val() !== 'undefined';
+            dontCrossCorners = typeof $('#bubble_star_section .dont_cross_corners:checked').val() !== 'undefined';
+            weight = parseInt($('#bubble_star_section .spinner').val()) || 1;
+            weight = weight >= 1 ? weight : 1;
+            heuristic = $('input[name=bubble_star_heuristic]:checked').val();
+
+            finder = new PF.BubbleStarFinder({
+                allowDiagonal: allowDiagonal,
+                dontCrossCorners: dontCrossCorners,
+                heuristic: PF.Heuristic[heuristic],
+                weight: weight,
+            });
+            break;
 
         case 'dijkstra_header':
             allowDiagonal = typeof $('#dijkstra_section ' +
@@ -131,7 +145,7 @@ var Panel = {
             trackRecursion = typeof $('#jump_point_section ' +
                                      '.track_recursion:checked').val() !== 'undefined';
             heuristic = $('input[name=jump_point_heuristic]:checked').val();
-            
+
             finder = new PF.JumpPointFinder({
               trackJumpRecursion: trackRecursion,
               heuristic: PF.Heuristic[heuristic],

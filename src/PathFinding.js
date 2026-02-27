@@ -8,6 +8,7 @@ module.exports = {
     'AStarFinder'               : require('./finders/AStarFinder'),
     'BestFirstFinder'           : require('./finders/BestFirstFinder'),
     'BreadthFirstFinder'        : require('./finders/BreadthFirstFinder'),
+    'BubbleStarFinder'          : require('./finders/BubbleStarFinder'),
     'DijkstraFinder'            : require('./finders/DijkstraFinder'),
     'BiAStarFinder'             : require('./finders/BiAStarFinder'),
     'BiBestFirstFinder'         : require('./finders/BiBestFirstFinder'),
