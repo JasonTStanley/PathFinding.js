@@ -3,3 +3,5 @@ node_modules/
 /lib
 site/
 release/
+package-lock.json
+.vscode

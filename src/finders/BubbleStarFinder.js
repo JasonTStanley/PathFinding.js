@@ -24,6 +24,10 @@ function BubbleStarFinder(opt) {
     this.heuristic = opt.heuristic || Heuristic.euclidean;
     this.weight = opt.weight || 1;
     this.diagonalMovement = opt.diagonalMovement;
+    this.debug = !!opt.debug;
+    this.onStep = typeof opt.onStep === 'function' ? opt.onStep : null;
+    this.debuggerBreak = !!opt.debuggerBreak;
+    this.maxIterations = opt.maxIterations || 50000;
 
     if (!this.diagonalMovement) {
         if (!this.allowDiagonal) {
@@ -46,205 +50,131 @@ function BubbleStarFinder(opt) {
     }
 }
 
+BubbleStarFinder.prototype._buildOccupiedCellList = function(grid) {
+    var occupied = [];
+    var x;
+    var y;
+
+    for (x = 0; x < grid.width; ++x) {
+        for (y = 0; y < grid.height; ++y) {
+            if (!grid.isWalkableAt(x, y)) {
+                occupied.push([x, y]);
+            }
+        }
+    }
+
+    return occupied;
+};
+
+BubbleStarFinder.prototype.signedDistanceAt = function(x, y, grid, occupiedCells) {
+    var nearest;
+    var i;
+    var dx;
+    var dy;
+    var dist;
+
+    if (!grid.isInside(x, y)) {
+        return 0;
+    }
+
+    occupiedCells = occupiedCells || this._buildOccupiedCellList(grid);
+
+    if (!occupiedCells.length) {
+        nearest = Math.max(grid.width, grid.height);
+    } else {
+        nearest = Infinity;
+        for (i = 0; i < occupiedCells.length; ++i) {
+            dx = x - occupiedCells[i][0];
+            dy = y - occupiedCells[i][1];
+            dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < nearest) {
+                nearest = dist;
+            }
+        }
+    }
+
+
+    return nearest;
+};
+
 
 BubbleStarFinder.prototype.findPath = function(startX, startY, endX, endY, grid) {
-    var openList = new Heap(function(a, b) { return a.f - b.f; });
-    var closeSet = new Set();
-    var bestG = {};
-    var bubbles = {};
+    var openList = new Heap(function(nodeA, nodeB) {
+            return nodeA.f - nodeB.f;
+        }),
+        startNode = grid.getNodeAt(startX, startY),
+        endNode = grid.getNodeAt(endX, endY),
+        heuristic = this.heuristic,
+        diagonalMovement = this.diagonalMovement,
+        weight = this.weight,
+        abs = Math.abs, SQRT2 = Math.SQRT2,
+        node, neighbors, neighbor, i, l, x, y, ng;
 
-    var start = {
-        center: [startX, startY],
-        radius: 0,
-        cost: 0,
-        parent: null,
-        via: null
-    };
-    var goal = {
-        center: [endX, endY],
-        radius: 0,
-        cost: 0,
-        parent: null,
-        via: null
-    };
+    
+    occupiedCells = this._buildOccupiedCellList(grid);
 
-    function gridSdfQuery(x, y) {
-        if (!grid.isInside(x, y)) {
-            // Treat out-of-bounds as obstacle
-            return 0;
-        }
-        if (!grid.isWalkableAt(x, y)) {
-            return 0;
-        }
-        var minDist = Infinity;
-        for (var i = 0; i < grid.width; ++i) {
-            for (var j = 0; j < grid.height; ++j) {
-                if (!grid.isWalkableAt(i, j)) {
-                    var dx = x - i, dy = y - j;
-                    var dist = Math.sqrt(dx * dx + dy * dy);
-                    if (dist < minDist) {
-                        minDist = dist;
-                    }
-                }
-            }
-        }
-        // If no obstacles, return a large value
-        return (minDist === Infinity) ? Math.max(grid.width, grid.height) : minDist;
-    }
-    function heuristic(current) {
-        return this.heuristic(Math.abs(current[0] - endX), Math.abs(current[1] - endY));
-    }
+    // set the `g` and `f` value of the start node to be 0
+    startNode.g = 0;
+    startNode.f = 0;
 
-    function bubbleDistance(a, b) {
-        var dx = a[0] - b[0], dy = a[1] - b[1];
-        return Math.sqrt(dx*dx + dy*dy);
-    }
 
-    function sphereEdge(radius) {
-        var points = [];
-        var r2 = radius * radius;
-        var lo = Math.floor(-radius), hi = Math.ceil(radius + 1);
-        for (var x = lo; x < hi; ++x) {
-            for (var y = lo; y < hi; ++y) {
-                var d2 = x*x + y*y;
-                if (d2 >= r2) continue;
-                var is_boundary = false;
-                for (var dx = -1; dx <= 1; ++dx) {
-                    for (var dy = -1; dy <= 1; ++dy) {
-                        if (dx === 0 && dy === 0) continue;
-                        var nx = x + dx, ny = y + dy;
-                        var nd2 = nx*nx + ny*ny;
-                        if (nd2 >= r2) {
-                            is_boundary = true;
-                            break;
-                        }
-                    }
-                    if (is_boundary) break;
-                }
-                if (is_boundary) points.push([x, y]);
-            }
-        }
-        return points;
-    }
+    // push the start node into the open list
+    openList.push(startNode);
+    startNode.opened = true;
 
-    function pushOpen(bubble) {
-        var key = gridVecKey(bubble.center[0], bubble.center[1]);
-        var g = bubble.cost;
-        if (closeSet.has(key)) return;
-        if (bestG[key] !== undefined && g >= bestG[key]) return;
-        bestG[key] = g;
-        bubbles[key] = bubble;
-        var f = g + heuristic.call(this, bubble.center);
-        bubble.f = f;
-        openList.push(bubble);
-        // Debug: log bubble opened
-        console.log('Opened bubble:', bubble.center, 'cost:', bubble.cost, 'radius:', bubble.radius);
-    }
+    
 
-    function popOpen() {
-        while (!openList.empty()) {
-            var bubble = openList.pop();
-            var key = gridVecKey(bubble.center[0], bubble.center[1]);
-            if (closeSet.has(key)) continue;
-            var retry = false;
-            closeSet.forEach(function(closedKey) {
-                var closedBubble = bubbles[closedKey];
-                if (!closedBubble) return;
-                if (bubble.parent && closedKey === gridVecKey(bubble.parent.center[0], bubble.parent.center[1])) return;
-                var dist = bubbleDistance(bubble.center, closedBubble.center);
-                if (dist < closedBubble.radius - 1.5) retry = true;
-            });
-            if (retry) continue;
-            if (bestG[key] !== undefined && bubble.cost > bestG[key] + 1e-5) continue;
-            var pos = [bubble.center[0], bubble.center[1]];
-            var sdf = gridSdfQuery(pos[0], pos[1], grid);
-            bubble.radius = sdf;
-            // Debug: log bubble popped
-            console.log('Popped bubble:', bubble.center, 'cost:', bubble.cost, 'radius:', bubble.radius);
-            return bubble;
-        }
-        return null;
-    }
 
-    function goalReached(bubble) {
-        return bubbleDistance(bubble.center, goal.center) < bubble.radius;
-    }
-
-    function gridVecKey(x, y) {
-        return x + ',' + y;
-    }
-
-    function getNeighbor(bubble) {
-        var neighbors = [];
-        var r = bubble.radius;
-        var edgePoints = sphereEdge(r);
-        if (!bubble.parent) {
-            for (var i = 0; i < edgePoints.length; ++i) {
-                var next = [bubble.center[0] + edgePoints[i][0], bubble.center[1] + edgePoints[i][1]];
-                var temp = {
-                    center: next,
-                    radius: 0,
-                    cost: bubble.cost + Math.sqrt(edgePoints[i][0]*edgePoints[i][0] + edgePoints[i][1]*edgePoints[i][1]),
-                    parent: bubble,
-                    via: bubble
-                };
-                neighbors.push(temp);
-            }
-            return neighbors;
-        }
-        for (var i = 0; i < edgePoints.length; ++i) {
-            var next = [bubble.center[0] + edgePoints[i][0], bubble.center[1] + edgePoints[i][1]];
-            var temp = {
-                center: next,
-                radius: 0,
-                cost: bubble.cost + Math.sqrt(edgePoints[i][0]*edgePoints[i][0] + edgePoints[i][1]*edgePoints[i][1]),
-                parent: bubble,
-                via: bubble
-            };
-            neighbors.push(temp);
-        }
-        return neighbors;
-    }
-
-    var startKey = gridVecKey(start.center[0], start.center[1]);
-    bubbles[startKey] = start;
-    bestG[startKey] = 0;
-    pushOpen.call(this, start);
-
+    // while the open list is not empty
     while (!openList.empty()) {
-        var current = popOpen.call(this);
-        if (!current) break;
-        var currentKey = gridVecKey(current.center[0], current.center[1]);
-        if (goalReached(current)) {
-            var path = [];
-            var node = current;
-            while (node) {
-                path.push([node.center[0], node.center[1]]);
-                node = node.parent;
+        // pop the position of node which has the minimum `f` value.
+        node = openList.pop();
+        node.closed = true;
+
+        // if reached the end position, construct the path and return it
+        if (node === endNode) {
+            return Util.backtrace(endNode);
+        }
+
+        // get neigbours of the current node
+        neighbors = grid.getNeighbors(node, diagonalMovement);
+        for (i = 0, l = neighbors.length; i < l; ++i) {
+            neighbor = neighbors[i];
+
+            if (neighbor.closed) {
+                continue;
             }
-            path.push([goal.center[0], goal.center[1]]);
-            path.reverse();
-            // Debug: log path found
-            console.log('Path found:', path);
-            return path;
-        }
-        closeSet.add(currentKey);
-        // Visualization: mark closed cell
-        var x = current.center[0], y = current.center[1];
-        var node = grid.getNodeAt(x, y);
-        if (node) node.closed = true;
-        // Debug: log closed cell
-        console.log('Closed cell:', current.center);
-        var neighbors = getNeighbor(current);
-        for (var i = 0; i < neighbors.length; ++i) {
-            var neighbor = neighbors[i];
-            var nKey = gridVecKey(neighbor.center[0], neighbor.center[1]);
-            if (closeSet.has(nKey)) continue;
-            pushOpen.call(this, neighbor);
-        }
-    }
-    // Debug: log failure
-    console.log('No path found');
+
+            x = neighbor.x;
+            y = neighbor.y;
+
+            // get the distance between current node and the neighbor
+            // and calculate the next g score
+            ng = node.g + ((x - node.x === 0 || y - node.y === 0) ? 1 : SQRT2);
+
+            // check if the neighbor has not been inspected yet, or
+            // can be reached with smaller cost from the current node
+            if (!neighbor.opened || ng < neighbor.g) {
+                neighbor.g = ng;
+                neighbor.h = neighbor.h || weight * heuristic(abs(x - endX), abs(y - endY));
+                neighbor.f = neighbor.g + neighbor.h;
+                neighbor.parent = node;
+
+                if (!neighbor.opened) {
+                    openList.push(neighbor);
+                    neighbor.opened = true;
+                } else {
+                    // the neighbor can be reached with smaller cost.
+                    // Since its f value has been updated, we have to
+                    // update its position in the open list
+                    openList.updateItem(neighbor);
+                }
+            }
+        } // end for each neighbor
+    } // end while not open list empty
+
+    // fail to find the path
     return [];
-}
+};
+
 module.exports = BubbleStarFinder;
