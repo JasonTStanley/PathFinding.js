@@ -72,11 +72,13 @@ BubbleStarFinder.prototype.signedDistanceAt = function (
   grid,
   occupiedCells
 ) {
+  // sdf to nearest obstacle, negative if inside an obstacle, positive if outside
   var nearest
   var i
   var dx
   var dy
   var dist
+
 
   if (!grid.isInside(x, y)) {
     return 0
@@ -85,9 +87,9 @@ BubbleStarFinder.prototype.signedDistanceAt = function (
   occupiedCells = occupiedCells || this._buildOccupiedCellList(grid)
 
   if (!occupiedCells.length) {
-    nearest = Math.max(grid.width, grid.height)
+    nearest = Math.min(Math.min(x+1, grid.width - x), Math.min(y+1, grid.height - y))
   } else {
-    nearest = Infinity
+    nearest = Math.min(Math.min(x+1, grid.width - x), Math.min(y+1, grid.height - y))
     for (i = 0; i < occupiedCells.length; ++i) {
       dx = x - occupiedCells[i][0]
       dy = y - occupiedCells[i][1]
@@ -188,14 +190,14 @@ function computeDistanceMatrix2D (V, Q) {
   return D
 }
 
-function openWithinRadius (openMap, qx, qy, r) {
+function openWithinRadius (nodeMap, qx, qy, r) {
   var r2 = r * r
   var r_int = Math.ceil(r)
   var out = []
   for (var dx = -r_int; dx <= r_int; dx++) {
     for (var dy = -r_int; dy <= r_int; dy++) {
       if (dx * dx + dy * dy >= r2) continue // keep circle
-      var n = openMap.get(key(qx + dx, qy + dy))
+      var n = nodeMap.get(key(qx + dx, qy + dy))
       if (n) out.push(n)
     }
   }
@@ -218,7 +220,7 @@ BubbleStarFinder.prototype.findPath = function (
   var openList = new Heap(function (nodeA, nodeB) {
       return nodeA.f - nodeB.f
     }),
-    openMap = new Map(),
+    nodeMap = new Map(),
     bubbles = [],
     startNode = grid.getNodeAt(startX, startY),
     endNode = grid.getNodeAt(endX, endY),
@@ -246,7 +248,7 @@ BubbleStarFinder.prototype.findPath = function (
   // push the start node into the open list
   openList.push(startNode)
   startNode.opened = true
-  openMap.set(key(startNode), startNode)
+  nodeMap.set(key(startNode), startNode)
 
   /**
    * Compute neighbors for Bubble* expansion from a node.
@@ -289,7 +291,7 @@ BubbleStarFinder.prototype.findPath = function (
     }
 
     // Candidate "via" nodes near current node — use OPEN set within r
-    var viaNodes = openWithinRadius(openMap, node.x, node.y, r - 1)
+    var viaNodes = openWithinRadius(nodeMap, node.x, node.y, r - 1)
     var K = viaNodes.length
 
     if (viaNodes.length > 0) {
@@ -299,8 +301,6 @@ BubbleStarFinder.prototype.findPath = function (
         var via = viaNodes[i]
         // Mark via as closed to prevent reuse in this expansion (lazy deletion)
         via.closed = true
-        // Remove from openMap to show removal from the open set, we can do this immediately
-        openMap.delete(key(via))
 
         var idx = via.bubble_idx
         if (idx != null && bubbles[idx]) viaBubbles.push(bubbles[idx])
@@ -345,13 +345,13 @@ BubbleStarFinder.prototype.findPath = function (
       return neighbors
     }
 
-    // If none found (can happen if your openMap excludes some needed nodes),
+    // If none found (can happen if your nodeMap excludes some needed nodes),
     // you need a fallback. Closest match to intent: fall back to using node as via.
     // This keeps the algorithm progressing.
     if (K === 0) {
-      console.warn(
-        'Bubble* fallback: no open nodes found within radius, using current node as via'
-      )
+      //console.warn(
+      //  'Bubble* fallback: no open nodes found within radius, using current node as via'
+      //)
       for (i = 0; i < N; i++) {
         ;(dx = edge[i][0]), (dy = edge[i][1])
         nx = node.x + dx
@@ -440,7 +440,7 @@ BubbleStarFinder.prototype.findPath = function (
     // if reached the end position, construct the path and return it
     if (bubbleContains(bubble, endNode)) {
       // calculate the path to the end node,
-      var viaNodes = openWithinRadius(openMap, node.x, node.y, radius)
+      var viaNodes = openWithinRadius(nodeMap, node.x, node.y, radius)
       viaNodes.push(node) // also consider the current node as a via candidate
       var bestCost = Infinity
       for (i = 0; i < viaNodes.length; i++) {
@@ -474,7 +474,7 @@ BubbleStarFinder.prototype.findPath = function (
       if (!neighbor.opened) {
         openList.push(neighbor)
         neighbor.opened = true
-        openMap.set(key(neighbor), neighbor)
+        nodeMap.set(key(neighbor), neighbor)
       } else {
         // the neighbor can be reached with smaller cost.
         // Since its f value has been updated, we have to
