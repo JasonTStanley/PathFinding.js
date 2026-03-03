@@ -25,13 +25,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "10.24.1"
-          cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --production=false
 
       - name: Build browser bundle
-        run: npx gulp compile
+        run: ./node_modules/.bin/gulp compile
 
       - name: Prepare site artifact
         run: |
