@@ -2,7 +2,7 @@ name: Build and Deploy Pages
 
 on:
   push:
-    branches: ["main", "master"]
+    branches: ["bubble-star"]
   workflow_dispatch:
 
 permissions:
