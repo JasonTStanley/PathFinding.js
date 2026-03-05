@@ -261,12 +261,10 @@ BubbleStarFinder.prototype.findPath = function (
   function expandAndUpdateBoundary (node, radius, bubble_idx) {
     var neighbors = []
 
-    // Convert radius to integer cell radius, like C++: floor(radius / resolution_)
-    var r = Math.floor(radius)
-    if (r <= 0) return neighbors
+    if (radius < 0.5) return neighbors
 
     // "sphereEdge" in 2D => your disk boundary offsets for integer radius r
-    var edge = diskBoundaryOffsets(r, diagonalMovement) // returns Array<[dx,dy]>
+    var edge = diskBoundaryOffsets(radius, diagonalMovement) // returns Array<[dx,dy]>
 
     // Base case: no parent
     if (!node.parent) {
@@ -287,11 +285,13 @@ BubbleStarFinder.prototype.findPath = function (
         neighbor.bubble_idx = bubble_idx
         neighbors.push(neighbor)
       }
+      nodeMap.delete(key(node))
       return neighbors
     }
 
     // Candidate "via" nodes near current node — use OPEN set within r
-    var viaNodes = openWithinRadius(nodeMap, node.x, node.y, r - 1)
+    var viaNodes = openWithinRadius(nodeMap, node.x, node.y, radius)
+    viaNodes.push(node) // also consider the current node as a via candidate
     var K = viaNodes.length
 
     if (viaNodes.length > 0) {
@@ -301,6 +301,7 @@ BubbleStarFinder.prototype.findPath = function (
         var via = viaNodes[i]
         // Mark via as closed to prevent reuse in this expansion (lazy deletion)
         via.closed = true
+        //nodeMap.delete(key(via))
 
         var idx = via.bubble_idx
         if (idx != null && bubbles[idx]) viaBubbles.push(bubbles[idx])
@@ -319,7 +320,7 @@ BubbleStarFinder.prototype.findPath = function (
           var b = viaBubbles[j]
           var bx = nx - b.x
           var by = ny - b.y
-          b_rad = Math.floor(b.radius)
+          b_rad = b.radius
           if (bx * bx + by * by < b_rad * b_rad) {
             insideViaBubble = true
             break
@@ -482,6 +483,7 @@ BubbleStarFinder.prototype.findPath = function (
         openList.updateItem(neighbor)
       }
     } // end for each neighbor
+    //nodeMap.delete(key(node))
   } // end while not open list empty
 
   // fail to find the path

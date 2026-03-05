@@ -247,17 +247,18 @@ $.extend(Controller, {
     },
     onpaused: function() {
         console.log('=> paused');
-        this.setButtonStates({
+        this.setButtonStates(
+            {
             id: 1,
-            text: 'Resume Search',
-            enabled: true,
-            callback: $.proxy(this.resume, this),
-        }, {
-            id: 2,
             text: 'Cancel Search',
             enabled: true,
             callback: $.proxy(this.cancel, this),
-        });
+        },{
+            id: 2,
+            text: 'Resume Search',
+            enabled: true,
+            callback: $.proxy(this.resume, this),
+        } );
         // => [searching, ready]
     },
     onfinished: function() {
