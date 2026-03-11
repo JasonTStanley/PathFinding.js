@@ -65,20 +65,22 @@ BubbleStarFinder.prototype._buildOccupiedCellList = function (grid) {
 
   return occupied
 }
-
 BubbleStarFinder.prototype.signedDistanceAt = function (
   x,
   y,
   grid,
   occupiedCells
 ) {
-  // sdf to nearest obstacle, negative if inside an obstacle, positive if outside
   var nearest
   var i
-  var dx
-  var dy
+  var cx
+  var cy
+  var qx
+  var qy
+  var outside
+  var inside
   var dist
-
+  var h = 0.5
 
   if (!grid.isInside(x, y)) {
     return 0
@@ -86,17 +88,29 @@ BubbleStarFinder.prototype.signedDistanceAt = function (
 
   occupiedCells = occupiedCells || this._buildOccupiedCellList(grid)
 
-  if (!occupiedCells.length) {
-    nearest = Math.min(Math.min(x+1, grid.width - x), Math.min(y+1, grid.height - y))
-  } else {
-    nearest = Math.min(Math.min(x+1, grid.width - x), Math.min(y+1, grid.height - y))
-    for (i = 0; i < occupiedCells.length; ++i) {
-      dx = x - occupiedCells[i][0]
-      dy = y - occupiedCells[i][1]
-      dist = Math.sqrt(dx * dx + dy * dy)
-      if (dist < nearest) {
-        nearest = dist
-      }
+  // distance to map boundary, if you want to keep treating outside-grid as obstacle
+  nearest = Math.min(
+    Math.min(x + 1, grid.width - x),
+    Math.min(y + 1, grid.height - y)
+  )
+
+  for (i = 0; i < occupiedCells.length; ++i) {
+    cx = occupiedCells[i][0]
+    cy = occupiedCells[i][1]
+
+    qx = Math.abs(x - cx) - h
+    qy = Math.abs(y - cy) - h
+
+    outside = Math.sqrt(
+      Math.max(qx, 0) * Math.max(qx, 0) +
+      Math.max(qy, 0) * Math.max(qy, 0)
+    )
+    inside = Math.min(Math.max(qx, qy), 0)
+
+    dist = outside + inside
+
+    if (dist < nearest) {
+      nearest = dist
     }
   }
 
@@ -138,16 +152,17 @@ function diskBoundaryOffsets (radius, consider_diagonal) {
     ]
   }
 
-  // range(floor(-r), ceil(r+1)) with hi exclusive
-  var lo = Math.floor(-radius)
-  var hi = Math.ceil(radius + 1.0)
+  // range(-r, r+1) with hi exclusive
+  var lo = -radius
+  var hi = radius + 1
 
   for (var x = lo; x < hi; x++) {
     for (var y = lo; y < hi; y++) {
       var p2 = x * x + y * y
 
       // inside test: strictly inside
-      if (p2 >= R2) continue
+      if (p2 > R2) continue
+      if (x === 0 && y === 0) continue
 
       // boundary test: any 8-neighbor outside (or on) the circle
       var isBoundary = false
@@ -156,7 +171,7 @@ function diskBoundaryOffsets (radius, consider_diagonal) {
         var ny = y + N[i][1]
         var q2 = nx * nx + ny * ny
 
-        if (q2 >= R2) {
+        if (q2 > R2) {
           isBoundary = true
           break
         }
@@ -190,12 +205,11 @@ function computeDistanceMatrix2D (V, Q) {
   return D
 }
 
-function openWithinRadius (nodeMap, qx, qy, r) {
+function cellsWithinRadius (nodeMap, qx, qy, r) {
   var r2 = r * r
-  var r_int = Math.ceil(r)
   var out = []
-  for (var dx = -r_int; dx <= r_int; dx++) {
-    for (var dy = -r_int; dy <= r_int; dy++) {
+  for (var dx = -r; dx <= r; dx++) {
+    for (var dy = -r; dy <= r; dy++) {
       if (dx * dx + dy * dy >= r2) continue // keep circle
       var n = nodeMap.get(key(qx + dx, qy + dy))
       if (n) out.push(n)
@@ -290,7 +304,7 @@ BubbleStarFinder.prototype.findPath = function (
     }
 
     // Candidate "via" nodes near current node — use OPEN set within r
-    var viaNodes = openWithinRadius(nodeMap, node.x, node.y, radius)
+    var viaNodes = cellsWithinRadius(nodeMap, node.x, node.y, radius)
     viaNodes.push(node) // also consider the current node as a via candidate
     var K = viaNodes.length
 
@@ -299,12 +313,13 @@ BubbleStarFinder.prototype.findPath = function (
       var viaBubbles = []
       for (var i = 0; i < viaNodes.length; i++) {
         var via = viaNodes[i]
-        // Mark via as closed to prevent reuse in this expansion (lazy deletion)
         via.closed = true
         //nodeMap.delete(key(via))
 
         var idx = via.bubble_idx
-        if (idx != null && bubbles[idx]) viaBubbles.push(bubbles[idx])
+        if (idx != null && bubbles[idx] && (viaBubbles[bubbles[idx]] === undefined)) {
+          viaBubbles.push(bubbles[idx])
+        }
       }
 
       // Filter edge once
@@ -354,7 +369,7 @@ BubbleStarFinder.prototype.findPath = function (
       //  'Bubble* fallback: no open nodes found within radius, using current node as via'
       //)
       for (i = 0; i < N; i++) {
-        ;(dx = edge[i][0]), (dy = edge[i][1])
+        (dx = edge[i][0]), (dy = edge[i][1])
         nx = node.x + dx
         ny = node.y + dy
         if (!grid.isInside(nx, ny) || !grid.isWalkableAt(nx, ny)) {
@@ -416,14 +431,19 @@ BubbleStarFinder.prototype.findPath = function (
     var dx = node.x - bubble.x
     var dy = node.y - bubble.y
     var distance_sq = dx * dx + dy * dy
-    return distance_sq < bubble.radius * bubble.radius
+    return distance_sq <= bubble.radius * bubble.radius
   }
 
   // while the open list is not empty
   while (!openList.empty()) {
     // pop the position of node which has the minimum `f` value.
     node = openList.pop()
-    if (node === endNode || endNode.closed) {
+    if (node === endNode) {
+      tmp = node
+      while (tmp.parent) {
+        console.log('Path node:', tmp.x, tmp.y, 'via bubble idx', tmp.bubble_idx)
+        tmp = tmp.parent
+      }
       return Util.backtrace(endNode)
     }
 
@@ -434,14 +454,16 @@ BubbleStarFinder.prototype.findPath = function (
     node.closed = true
 
     var radius = this.signedDistanceAt(node.x, node.y, grid, occupiedCells)
-
+    radius = Math.floor(radius)
+    console.log('Expanding bubble at', node.x, node.y, 'with radius', radius)
     var bubble = new Bubble(node.x, node.y, radius)
     bubbles.push(bubble)
 
     // if reached the end position, construct the path and return it
     if (bubbleContains(bubble, endNode)) {
+      console.log('End node is within bubble, connecting directly to end node')
       // calculate the path to the end node,
-      var viaNodes = openWithinRadius(nodeMap, node.x, node.y, radius)
+      var viaNodes = cellsWithinRadius(nodeMap, node.x, node.y, radius)
       viaNodes.push(node) // also consider the current node as a via candidate
       var bestCost = Infinity
       for (i = 0; i < viaNodes.length; i++) {
