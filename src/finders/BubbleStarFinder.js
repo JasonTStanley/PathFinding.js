@@ -28,6 +28,7 @@ function BubbleStarFinder (opt) {
   this.onStep = typeof opt.onStep === 'function' ? opt.onStep : null
   this.debuggerBreak = !!opt.debuggerBreak
   this.maxIterations = opt.maxIterations || 50000
+  this.connect = !!opt.connect
 
   if (!this.diagonalMovement) {
     if (!this.allowDiagonal) {
@@ -65,6 +66,7 @@ BubbleStarFinder.prototype._buildOccupiedCellList = function (grid) {
 
   return occupied
 }
+
 BubbleStarFinder.prototype.signedDistanceAt = function (
   x,
   y,
@@ -115,6 +117,10 @@ BubbleStarFinder.prototype.signedDistanceAt = function (
   }
 
   return nearest
+}
+
+function canMoveDiagonally (diagonalMovement) {
+  return diagonalMovement !== DiagonalMovement.Never
 }
 
 function key (node) {
@@ -185,25 +191,25 @@ function diskBoundaryOffsets (radius, consider_diagonal) {
   return out
 }
 
-function computeDistanceMatrix2D (V, Q) {
-  var M = V.length
-  var N = Q.length
+// function computeDistanceMatrix2D (V, Q) {
+//   var M = V.length
+//   var N = Q.length
 
-  var D = new Array(M)
-  for (var i = 0; i < M; i++) {
-    D[i] = new Array(N)
-    var vx = V[i][0]
-    var vy = V[i][1]
+//   var D = new Array(M)
+//   for (var i = 0; i < M; i++) {
+//     D[i] = new Array(N)
+//     var vx = V[i][0]
+//     var vy = V[i][1]
 
-    for (var j = 0; j < N; j++) {
-      var dx = vx - Q[j][0]
-      var dy = vy - Q[j][1]
-      D[i][j] = Math.sqrt(dx * dx + dy * dy)
-    }
-  }
+//     for (var j = 0; j < N; j++) {
+//       var dx = vx - Q[j][0]
+//       var dy = vy - Q[j][1]
+//       D[i][j] = Math.sqrt(dx * dx + dy * dy)
+//     }
+//   }
 
-  return D
-}
+//   return D
+// }
 
 function cellsWithinRadius (nodeMap, qx, qy, r) {
   var r2 = r * r
@@ -224,7 +230,14 @@ function Bubble (x, y, radius) {
   this.radius = radius
 }
 
-BubbleStarFinder.prototype.findPath = function (
+function bubbleContains (bubble, node) {
+  var dx = node.x - bubble.x
+  var dy = node.y - bubble.y
+  var distance_sq = dx * dx + dy * dy
+  return distance_sq <= bubble.radius * bubble.radius
+}
+
+function findPathOneDirection (
   startX,
   startY,
   endX,
@@ -242,7 +255,6 @@ BubbleStarFinder.prototype.findPath = function (
     diagonalMovement = this.diagonalMovement,
     weight = this.weight,
     abs = Math.abs,
-    SQRT2 = Math.SQRT2,
     node,
     i,
     l,
@@ -274,23 +286,31 @@ BubbleStarFinder.prototype.findPath = function (
    */
   function expandAndUpdateBoundary (node, radius, bubble_idx) {
     var neighbors = []
+    var considerDiagonal = canMoveDiagonally(diagonalMovement)
+    var i
+    var j
+    var dx
+    var dy
+    var nx
+    var ny
+    var stepCost
 
     if (radius < 0.5) return neighbors
 
     // "sphereEdge" in 2D => your disk boundary offsets for integer radius r
-    var edge = diskBoundaryOffsets(radius, diagonalMovement) // returns Array<[dx,dy]>
+    var edge = diskBoundaryOffsets(radius, considerDiagonal) // returns Array<[dx,dy]>
 
     // Base case: no parent
     if (!node.parent) {
-      for (var i = 0; i < edge.length; i++) {
-        var dx = edge[i][0],
-          dy = edge[i][1]
+      for (i = 0; i < edge.length; i++) {
+        dx = edge[i][0]
+        dy = edge[i][1]
         var nx0 = node.x + dx
         var ny0 = node.y + dy
         if (!grid.isInside(nx0, ny0) || !grid.isWalkableAt(nx0, ny0)) {
           continue
         }
-        var stepCost = Math.hypot(dx, dy)
+        stepCost = Math.hypot(dx, dy)
         var neighbor = grid.getNodeAt(nx0, ny0)
         neighbor.g = node.g + stepCost
         neighbor.h = neighbor.h || estimateHeuristic(nx0, ny0)
@@ -311,13 +331,15 @@ BubbleStarFinder.prototype.findPath = function (
     if (viaNodes.length > 0) {
       // Precompute bubbles referenced by via nodes (and guard bubble_idx)
       var viaBubbles = []
-      for (var i = 0; i < viaNodes.length; i++) {
+      var seenBubbleIdx = {}
+      for (i = 0; i < viaNodes.length; i++) {
         var via = viaNodes[i]
         via.closed = true
         //nodeMap.delete(key(via))
 
         var idx = via.bubble_idx
-        if (idx != null && bubbles[idx] && (viaBubbles[bubbles[idx]] === undefined)) {
+        if (idx != null && bubbles[idx] && !seenBubbleIdx[idx]) {
+          seenBubbleIdx[idx] = true
           viaBubbles.push(bubbles[idx])
         }
       }
@@ -331,11 +353,11 @@ BubbleStarFinder.prototype.findPath = function (
         var ny = node.y + dy
         var insideViaBubble = false
 
-        for (var j = 0; j < viaBubbles.length; j++) {
+        for (j = 0; j < viaBubbles.length; j++) {
           var b = viaBubbles[j]
           var bx = nx - b.x
           var by = ny - b.y
-          b_rad = b.radius
+          var b_rad = b.radius
           if (bx * bx + by * by < b_rad * b_rad) {
             insideViaBubble = true
             break
@@ -361,37 +383,40 @@ BubbleStarFinder.prototype.findPath = function (
       return neighbors
     }
 
+    // TODO: This is now unnecessary
     // If none found (can happen if your nodeMap excludes some needed nodes),
     // you need a fallback. Closest match to intent: fall back to using node as via.
     // This keeps the algorithm progressing.
-    if (K === 0) {
-      //console.warn(
-      //  'Bubble* fallback: no open nodes found within radius, using current node as via'
-      //)
-      for (i = 0; i < N; i++) {
-        (dx = edge[i][0]), (dy = edge[i][1])
-        nx = node.x + dx
-        ny = node.y + dy
-        if (!grid.isInside(nx, ny) || !grid.isWalkableAt(nx, ny)) {
-          continue
-        }
-        stepCost = Math.hypot(dx, dy)
-        var neighbor = grid.getNodeAt(nx, ny)
-        if (!neighbor.opened || node.g + stepCost < neighbor.g) {
-          neighbor.g = node.g + stepCost
-          neighbor.h = estimateHeuristic(nx, ny)
-          neighbor.f = neighbor.g + neighbor.h
-          neighbor.parent = node
-          neighbor.bubble_idx = bubble_idx
-          neighbors.push(neighbor)
-        }
-      }
-      return neighbors
-    }
+    // if (K === 0) {
+    //   //console.warn(
+    //   //  'Bubble* fallback: no open nodes found within radius, using current node as via'
+    //   //)
+    //   for (i = 0; i < N; i++) {
+    //     dx = edge[i][0]
+    //     dy = edge[i][1]
+    //     nx = node.x + dx
+    //     ny = node.y + dy
+    //     if (!grid.isInside(nx, ny) || !grid.isWalkableAt(nx, ny)) {
+    //       continue
+    //     }
+    //     stepCost = Math.hypot(dx, dy)
+    //     var neighbor = grid.getNodeAt(nx, ny)
+    //     if (!neighbor.opened || node.g + stepCost < neighbor.g) {
+    //       neighbor.g = node.g + stepCost
+    //       neighbor.h = estimateHeuristic(nx, ny)
+    //       neighbor.f = neighbor.g + neighbor.h
+    //       neighbor.parent = node
+    //       neighbor.bubble_idx = bubble_idx
+    //       neighbors.push(neighbor)
+    //     }
+    //   }
+    //   return neighbors
+    // }
 
     // For each edge step, choose best via: min_j (via.cost + dist(via.pos, next))
     for (i = 0; i < N; i++) {
-      ;(dx = edge[i][0]), (dy = edge[i][1])
+      dx = edge[i][0]
+      dy = edge[i][1]
       nx = node.x + dx
       ny = node.y + dy
       if (!grid.isInside(nx, ny) || !grid.isWalkableAt(nx, ny)) {
@@ -427,19 +452,12 @@ BubbleStarFinder.prototype.findPath = function (
     return neighbors
   }
 
-  function bubbleContains (bubble, node) {
-    var dx = node.x - bubble.x
-    var dy = node.y - bubble.y
-    var distance_sq = dx * dx + dy * dy
-    return distance_sq <= bubble.radius * bubble.radius
-  }
-
   // while the open list is not empty
   while (!openList.empty()) {
     // pop the position of node which has the minimum `f` value.
     node = openList.pop()
     if (node === endNode) {
-      tmp = node
+      var tmp = node
       while (tmp.parent) {
         console.log('Path node:', tmp.x, tmp.y, 'via bubble idx', tmp.bubble_idx)
         tmp = tmp.parent
@@ -468,8 +486,8 @@ BubbleStarFinder.prototype.findPath = function (
       var bestCost = Infinity
       for (i = 0; i < viaNodes.length; i++) {
         var via = viaNodes[i]
-        dist = Math.hypot(via.x - endNode.x, via.y - endNode.y)
-        total = via.g + dist
+        var dist = Math.hypot(via.x - endNode.x, via.y - endNode.y)
+        var total = via.g + dist
         if (total < bestCost) {
           bestCost = total
           endNode.parent = via
@@ -510,6 +528,35 @@ BubbleStarFinder.prototype.findPath = function (
 
   // fail to find the path
   return []
+}
+
+function findPathConnect (startX, startY, endX, endY, grid) {
+  var cmp = function (a, b) {
+    return a.f - b.f
+  }
+  var startOpenList = new Heap(cmp)
+  var endOpenList = new Heap(cmp)
+  var startStates = new Map()
+  var endStates = new Map()
+  var startNodeMap = new Map()
+  var endNodeMap = new Map()
+  var startBubbles = []
+  var endBubbles = []
+  var occupiedCells = this._buildOccupiedCellList(grid)
+  var diagonalMovement = this.diagonalMovement
+  var heuristic = this.heuristic
+  var weight = this.weight
+  var abs = Math.abs
+  var iterations = 0
+  var maxIterations = this.maxIterations
+  return []
+}
+
+BubbleStarFinder.prototype.findPath = function (startX, startY, endX, endY, grid) {
+  if (this.connect) {
+    return findPathConnect.call(this, startX, startY, endX, endY, grid)
+  }
+  return findPathOneDirection.call(this, startX, startY, endX, endY, grid)
 }
 
 module.exports = BubbleStarFinder
