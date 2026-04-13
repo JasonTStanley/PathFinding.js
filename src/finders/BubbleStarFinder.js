@@ -237,7 +237,200 @@ function bubbleContains (bubble, node) {
   return distance_sq <= bubble.radius * bubble.radius
 }
 
-function findPathOneDirection (
+BubbleStarFinder.prototype.estimateHeuristic = function (goalX, goalY, x, y) {
+  return this.weight * this.heuristic(Math.abs(x - goalX), Math.abs(y - goalY))
+}
+
+/**
+ * Compute neighbors for Bubble* expansion from a node.
+ *
+ * @param {number} goalX        Goal x (for heuristic)
+ * @param {number} goalY        Goal y (for heuristic)
+ * @param {Object} node          Current node {x,y,cost,parent}
+ * @param {number} radius        Radius in world units OR grid units depending on resolution
+ * @param {number} bubble_idx    Index of the bubble being expanded (for book-keeping)
+ *
+ * @returns {Array<Object>} neighbors nodes (new objects) with {x,y,cost,parent}
+ */
+BubbleStarFinder.prototype.expandAndUpdateBoundary = function (
+  goalX,
+  goalY,
+  grid,
+  nodeMap,
+  bubbles,
+  node,
+  radius,
+  bubble_idx
+) {
+  var neighbors = []
+  var considerDiagonal = canMoveDiagonally(this.diagonalMovement)
+  var estimateHeuristic = this.estimateHeuristic.bind(this, goalX, goalY)
+  var i
+  var j
+  var dx
+  var dy
+  var nx
+  var ny
+  var stepCost
+
+  if (radius < 0.5) return neighbors
+
+  // "sphereEdge" in 2D => your disk boundary offsets for integer radius r
+  var edge = diskBoundaryOffsets(radius, considerDiagonal) // returns Array<[dx,dy]>
+
+  // Base case: no parent
+  if (!node.parent) {
+    for (i = 0; i < edge.length; i++) {
+      dx = edge[i][0]
+      dy = edge[i][1]
+      var nx0 = node.x + dx
+      var ny0 = node.y + dy
+      if (!grid.isInside(nx0, ny0) || !grid.isWalkableAt(nx0, ny0)) {
+        continue
+      }
+      stepCost = Math.hypot(dx, dy)
+      var neighbor = grid.getNodeAt(nx0, ny0)
+      neighbor.g = node.g + stepCost
+      neighbor.h = neighbor.h || estimateHeuristic(nx0, ny0)
+      neighbor.f = neighbor.g + neighbor.h
+      neighbor.parent = node
+      neighbor.bubble_idx = bubble_idx
+      neighbors.push(neighbor)
+    }
+    nodeMap.delete(key(node))
+    return neighbors
+  }
+
+  // Candidate "via" nodes near current node — use OPEN set within r
+  var viaNodes = cellsWithinRadius(nodeMap, node.x, node.y, radius)
+  viaNodes.push(node) // also consider the current node as a via candidate
+  var K = viaNodes.length
+
+  if (viaNodes.length > 0) {
+    // Precompute bubbles referenced by via nodes (and guard bubble_idx)
+    var viaBubbles = []
+    var seenBubbleIdx = {}
+    for (i = 0; i < viaNodes.length; i++) {
+      var via = viaNodes[i]
+      via.closed = true
+      //nodeMap.delete(key(via))
+
+      var idx = via.bubble_idx
+      if (idx != null && bubbles[idx] && !seenBubbleIdx[idx]) {
+        seenBubbleIdx[idx] = true
+        viaBubbles.push(bubbles[idx])
+      }
+    }
+
+    // Filter edge once
+    var filteredEdge = []
+    for (i = 0; i < edge.length; i++) {
+      dx = edge[i][0]
+      dy = edge[i][1]
+      var nx = node.x + dx
+      var ny = node.y + dy
+      var insideViaBubble = false
+
+      for (j = 0; j < viaBubbles.length; j++) {
+        var b = viaBubbles[j]
+        var bx = nx - b.x
+        var by = ny - b.y
+        var b_rad = b.radius
+        if (bx * bx + by * by < b_rad * b_rad) {
+          insideViaBubble = true
+          break
+        }
+      }
+
+      if (!insideViaBubble) {
+        filteredEdge.push(edge[i])
+      }
+    }
+    edge = filteredEdge
+  }
+
+  var N = edge.length
+
+  if (N === 0) {
+    console.warn(
+      'Bubble* warning: all edge neighbors were inside via bubbles, skipping this bubble',
+      radius,
+      node.x,
+      node.y
+    )
+    return neighbors
+  }
+
+  // TODO: This is now unnecessary
+  // If none found (can happen if your nodeMap excludes some needed nodes),
+  // you need a fallback. Closest match to intent: fall back to using node as via.
+  // This keeps the algorithm progressing.
+  // if (K === 0) {
+  //   //console.warn(
+  //   //  'Bubble* fallback: no open nodes found within radius, using current node as via'
+  //   //)
+  //   for (i = 0; i < N; i++) {
+  //     dx = edge[i][0]
+  //     dy = edge[i][1]
+  //     nx = node.x + dx
+  //     ny = node.y + dy
+  //     if (!grid.isInside(nx, ny) || !grid.isWalkableAt(nx, ny)) {
+  //       continue
+  //     }
+  //     stepCost = Math.hypot(dx, dy)
+  //     var neighbor = grid.getNodeAt(nx, ny)
+  //     if (!neighbor.opened || node.g + stepCost < neighbor.g) {
+  //       neighbor.g = node.g + stepCost
+  //       neighbor.h = estimateHeuristic(nx, ny)
+  //       neighbor.f = neighbor.g + neighbor.h
+  //       neighbor.parent = node
+  //       neighbor.bubble_idx = bubble_idx
+  //       neighbors.push(neighbor)
+  //     }
+  //   }
+  //   return neighbors
+  // }
+
+  // For each edge step, choose best via: min_j (via.cost + dist(via.pos, next))
+  for (i = 0; i < N; i++) {
+    dx = edge[i][0]
+    dy = edge[i][1]
+    nx = node.x + dx
+    ny = node.y + dy
+    if (!grid.isInside(nx, ny) || !grid.isWalkableAt(nx, ny)) {
+      continue
+    }
+
+    var bestVia = viaNodes[0]
+    var bestCost = Infinity
+
+    for (j = 0; j < K; j++) {
+      var v = viaNodes[j]
+      var dist = Math.hypot(v.x - nx, v.y - ny)
+      var total = v.g + dist
+
+      if (total < bestCost) {
+        bestCost = total
+        bestVia = v
+      }
+    }
+
+    var neighbor = grid.getNodeAt(nx, ny)
+    // check if we have a better cost and update the neighbor
+    if (!neighbor.opened || bestCost < neighbor.g) {
+      neighbor.g = bestCost
+      neighbor.h = estimateHeuristic(nx, ny)
+      neighbor.f = neighbor.g + neighbor.h
+      neighbor.parent = bestVia
+      neighbor.bubble_idx = bubble_idx
+      neighbors.push(neighbor)
+    }
+  }
+
+  return neighbors
+}
+
+BubbleStarFinder.prototype.findPathOneDirection = function (
   startX,
   startY,
   endX,
@@ -251,19 +444,9 @@ function findPathOneDirection (
     bubbles = [],
     startNode = grid.getNodeAt(startX, startY),
     endNode = grid.getNodeAt(endX, endY),
-    heuristic = this.heuristic,
-    diagonalMovement = this.diagonalMovement,
-    weight = this.weight,
-    abs = Math.abs,
+    expandAndUpdateBoundary = this.expandAndUpdateBoundary.bind(this, endX, endY, grid, nodeMap, bubbles),
     node,
-    i,
-    l,
-    x,
-    y
-
-  function estimateHeuristic (x, y) {
-    return weight * heuristic(abs(x - endX), abs(y - endY))
-  }
+    i
 
   var occupiedCells = this._buildOccupiedCellList(grid)
 
@@ -275,182 +458,6 @@ function findPathOneDirection (
   openList.push(startNode)
   startNode.opened = true
   nodeMap.set(key(startNode), startNode)
-
-  /**
-   * Compute neighbors for Bubble* expansion from a node.
-   *
-   * @param {Object} node          Current node {x,y,cost,parent}
-   * @param {number} radius        Radius in world units OR grid units depending on resolution
-   *
-   * @returns {Array<Object>} neighbors nodes (new objects) with {x,y,cost,parent}
-   */
-  function expandAndUpdateBoundary (node, radius, bubble_idx) {
-    var neighbors = []
-    var considerDiagonal = canMoveDiagonally(diagonalMovement)
-    var i
-    var j
-    var dx
-    var dy
-    var nx
-    var ny
-    var stepCost
-
-    if (radius < 0.5) return neighbors
-
-    // "sphereEdge" in 2D => your disk boundary offsets for integer radius r
-    var edge = diskBoundaryOffsets(radius, considerDiagonal) // returns Array<[dx,dy]>
-
-    // Base case: no parent
-    if (!node.parent) {
-      for (i = 0; i < edge.length; i++) {
-        dx = edge[i][0]
-        dy = edge[i][1]
-        var nx0 = node.x + dx
-        var ny0 = node.y + dy
-        if (!grid.isInside(nx0, ny0) || !grid.isWalkableAt(nx0, ny0)) {
-          continue
-        }
-        stepCost = Math.hypot(dx, dy)
-        var neighbor = grid.getNodeAt(nx0, ny0)
-        neighbor.g = node.g + stepCost
-        neighbor.h = neighbor.h || estimateHeuristic(nx0, ny0)
-        neighbor.f = neighbor.g + neighbor.h
-        neighbor.parent = node
-        neighbor.bubble_idx = bubble_idx
-        neighbors.push(neighbor)
-      }
-      nodeMap.delete(key(node))
-      return neighbors
-    }
-
-    // Candidate "via" nodes near current node — use OPEN set within r
-    var viaNodes = cellsWithinRadius(nodeMap, node.x, node.y, radius)
-    viaNodes.push(node) // also consider the current node as a via candidate
-    var K = viaNodes.length
-
-    if (viaNodes.length > 0) {
-      // Precompute bubbles referenced by via nodes (and guard bubble_idx)
-      var viaBubbles = []
-      var seenBubbleIdx = {}
-      for (i = 0; i < viaNodes.length; i++) {
-        var via = viaNodes[i]
-        via.closed = true
-        //nodeMap.delete(key(via))
-
-        var idx = via.bubble_idx
-        if (idx != null && bubbles[idx] && !seenBubbleIdx[idx]) {
-          seenBubbleIdx[idx] = true
-          viaBubbles.push(bubbles[idx])
-        }
-      }
-
-      // Filter edge once
-      var filteredEdge = []
-      for (i = 0; i < edge.length; i++) {
-        dx = edge[i][0]
-        dy = edge[i][1]
-        var nx = node.x + dx
-        var ny = node.y + dy
-        var insideViaBubble = false
-
-        for (j = 0; j < viaBubbles.length; j++) {
-          var b = viaBubbles[j]
-          var bx = nx - b.x
-          var by = ny - b.y
-          var b_rad = b.radius
-          if (bx * bx + by * by < b_rad * b_rad) {
-            insideViaBubble = true
-            break
-          }
-        }
-
-        if (!insideViaBubble) {
-          filteredEdge.push(edge[i])
-        }
-      }
-      edge = filteredEdge
-    }
-
-    var N = edge.length
-
-    if (N === 0) {
-      console.warn(
-        'Bubble* warning: all edge neighbors were inside via bubbles, skipping this bubble',
-        radius,
-        node.x,
-        node.y
-      )
-      return neighbors
-    }
-
-    // TODO: This is now unnecessary
-    // If none found (can happen if your nodeMap excludes some needed nodes),
-    // you need a fallback. Closest match to intent: fall back to using node as via.
-    // This keeps the algorithm progressing.
-    // if (K === 0) {
-    //   //console.warn(
-    //   //  'Bubble* fallback: no open nodes found within radius, using current node as via'
-    //   //)
-    //   for (i = 0; i < N; i++) {
-    //     dx = edge[i][0]
-    //     dy = edge[i][1]
-    //     nx = node.x + dx
-    //     ny = node.y + dy
-    //     if (!grid.isInside(nx, ny) || !grid.isWalkableAt(nx, ny)) {
-    //       continue
-    //     }
-    //     stepCost = Math.hypot(dx, dy)
-    //     var neighbor = grid.getNodeAt(nx, ny)
-    //     if (!neighbor.opened || node.g + stepCost < neighbor.g) {
-    //       neighbor.g = node.g + stepCost
-    //       neighbor.h = estimateHeuristic(nx, ny)
-    //       neighbor.f = neighbor.g + neighbor.h
-    //       neighbor.parent = node
-    //       neighbor.bubble_idx = bubble_idx
-    //       neighbors.push(neighbor)
-    //     }
-    //   }
-    //   return neighbors
-    // }
-
-    // For each edge step, choose best via: min_j (via.cost + dist(via.pos, next))
-    for (i = 0; i < N; i++) {
-      dx = edge[i][0]
-      dy = edge[i][1]
-      nx = node.x + dx
-      ny = node.y + dy
-      if (!grid.isInside(nx, ny) || !grid.isWalkableAt(nx, ny)) {
-        continue
-      }
-
-      var bestVia = viaNodes[0]
-      var bestCost = Infinity
-
-      for (j = 0; j < K; j++) {
-        var v = viaNodes[j]
-        var dist = Math.hypot(v.x - nx, v.y - ny)
-        var total = v.g + dist
-
-        if (total < bestCost) {
-          bestCost = total
-          bestVia = v
-        }
-      }
-
-      var neighbor = grid.getNodeAt(nx, ny)
-      // check if we have a better cost and update the neighbor
-      if (!neighbor.opened || bestCost < neighbor.g) {
-        neighbor.g = bestCost
-        neighbor.h = estimateHeuristic(nx, ny)
-        neighbor.f = neighbor.g + neighbor.h
-        neighbor.parent = bestVia
-        neighbor.bubble_idx = bubble_idx
-        neighbors.push(neighbor)
-      }
-    }
-
-    return neighbors
-  }
 
   // while the open list is not empty
   while (!openList.empty()) {
@@ -503,7 +510,7 @@ function findPathOneDirection (
 
     // get neigbours of the current node
     neighbors = expandAndUpdateBoundary(node, radius, bubbles.length - 1)
-    for (i = 0, l = neighbors.length; i < l; ++i) {
+    for (i = 0; i < neighbors.length; ++i) {
       neighbor = neighbors[i]
 
       if (neighbor.closed) {
@@ -536,19 +543,16 @@ function findPathConnect (startX, startY, endX, endY, grid) {
   }
   var startOpenList = new Heap(cmp)
   var endOpenList = new Heap(cmp)
-  var startStates = new Map()
-  var endStates = new Map()
   var startNodeMap = new Map()
   var endNodeMap = new Map()
   var startBubbles = []
   var endBubbles = []
+  var startNode = grid.getNodeAt(startX, startY)
+  var endNode = grid.getNodeAt(endX, endY)
+  var currentNodeFromStart, currentNodeFromEnd, i
+
   var occupiedCells = this._buildOccupiedCellList(grid)
-  var diagonalMovement = this.diagonalMovement
-  var heuristic = this.heuristic
-  var weight = this.weight
-  var abs = Math.abs
-  var iterations = 0
-  var maxIterations = this.maxIterations
+
   return []
 }
 
@@ -556,7 +560,7 @@ BubbleStarFinder.prototype.findPath = function (startX, startY, endX, endY, grid
   if (this.connect) {
     return findPathConnect.call(this, startX, startY, endX, endY, grid)
   }
-  return findPathOneDirection.call(this, startX, startY, endX, endY, grid)
+  return this.findPathOneDirection.call(this, startX, startY, endX, endY, grid)
 }
 
 module.exports = BubbleStarFinder
