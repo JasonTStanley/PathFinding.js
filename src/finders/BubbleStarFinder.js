@@ -272,8 +272,9 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function (
   var nx
   var ny
   var stepCost
+  var intersection
 
-  if (radius < 0.5) return neighbors
+  if (radius < 0.5) return { neighbors: neighbors }
 
   // "sphereEdge" in 2D => your disk boundary offsets for integer radius r
   var edge = diskBoundaryOffsets(radius, considerDiagonal) // returns Array<[dx,dy]>
@@ -290,6 +291,14 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function (
       }
       stepCost = Math.hypot(dx, dy)
       var neighbor = grid.getNodeAt(nx0, ny0)
+
+      // TODO
+      // Only for Bi-directional: track which boundary (start vs end) sees this neighbor, for meeting-in-the-middle detection
+      if (neighbor.by != node.by && neighbor.by) {
+        console.log('Neighbor', neighbor.x, neighbor.y, 'already opened by', neighbor.by, 'at bubble idx', neighbor.bubble_idx, 'now also seen by', node.by, 'at bubble idx', bubble_idx)
+        intersection = { bubble: bubbles[bubble_idx] }
+      }
+
       neighbor.g = node.g + stepCost
       neighbor.h = neighbor.h || estimateHeuristic(nx0, ny0)
       neighbor.f = neighbor.g + neighbor.h
@@ -298,7 +307,7 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function (
       neighbors.push(neighbor)
     }
     nodeMap.delete(key(node))
-    return neighbors
+    return { neighbors: neighbors, intersection: intersection }
   }
 
   // Candidate "via" nodes near current node — use OPEN set within r
@@ -358,7 +367,7 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function (
       node.x,
       node.y
     )
-    return neighbors
+    return { neighbors: neighbors }
   }
 
   // TODO: This is now unnecessary
@@ -416,6 +425,14 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function (
     }
 
     var neighbor = grid.getNodeAt(nx, ny)
+
+    // Only for Bi-directional: track which boundary (start vs end) sees this neighbor, for meeting-in-the-middle detection
+    if (neighbor.by != node.by && neighbor.by) {
+      console.log('Neighbor', neighbor.x, neighbor.y, 'already opened by', neighbor.by, 'at bubble idx', neighbor.bubble_idx, 'now also seen by', node.by, 'at bubble idx', bubble_idx)
+      intersection = { bubble: bubbles[bubble_idx] }
+      continue
+    }
+
     // check if we have a better cost and update the neighbor
     if (!neighbor.opened || bestCost < neighbor.g) {
       neighbor.g = bestCost
@@ -427,7 +444,59 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function (
     }
   }
 
-  return neighbors
+  return { neighbors: neighbors, intersection: intersection }
+}
+
+BubbleStarFinder.prototype.findConnection = function (intersection, startNodeMap, endNodeMap, startNode, endNode) {
+  if (startNodeMap.has(key(endNode)) || endNodeMap.has(key(startNode))) {
+    console.log('Direct connection found between start and end nodes!')
+    return { viaStart: startNode, viaEnd: endNode }
+  }
+
+  var intersectBubble = intersection.bubble
+
+  if (!intersectBubble) {
+    return null
+  }
+
+  // Candidate "via" nodes near current node — use OPEN set within r
+  var viaNodesStart = cellsWithinRadius(startNodeMap, intersectBubble.x, intersectBubble.y, intersectBubble.radius)
+  var viaNodesEnd = cellsWithinRadius(endNodeMap, intersectBubble.x, intersectBubble.y, intersectBubble.radius)
+
+  // If either side has no candidate around the intersecting bubble, skip safely.
+  if (viaNodesStart.length === 0 || viaNodesEnd.length === 0) {
+    return null
+  }
+
+  var bestViaStart = viaNodesStart[0]
+  var bestViaEnd = viaNodesEnd[0]
+  var bestCost = Infinity
+
+  for (var j = 0; j < viaNodesStart.length; j++) {
+    for (var k = 0; k < viaNodesEnd.length; k++) {
+      var viaStart = viaNodesStart[j]
+      var viaEnd = viaNodesEnd[k]
+
+      if (viaStart.x === viaEnd.x && viaStart.y === viaEnd.y) {
+        console.log("same node via found at bubble idx", viaStart.bubble_idx)
+      }
+
+      var dist = Math.hypot(viaStart.x - viaEnd.x, viaStart.y - viaEnd.y)
+      var total = viaStart.g + viaEnd.g + dist
+
+      if (total < bestCost) {
+        bestCost = total
+        bestViaStart = viaStart
+        bestViaEnd = viaEnd
+      }
+    }
+  }
+
+  if (!isFinite(bestCost) || !bestViaStart || !bestViaEnd) {
+    return null
+  }
+
+  return { viaStart: bestViaStart, viaEnd: bestViaEnd }
 }
 
 BubbleStarFinder.prototype.findPathOneDirection = function (
@@ -506,10 +575,11 @@ BubbleStarFinder.prototype.findPathOneDirection = function (
       }
       endNode.opened = true
       openList.push(endNode)
+      nodeMap.set(key(endNode), endNode)  // TODO: added because Bi-directional also has this, but not needed
     }
 
     // get neigbours of the current node
-    neighbors = expandAndUpdateBoundary(node, radius, bubbles.length - 1)
+    neighbors = expandAndUpdateBoundary(node, radius, bubbles.length - 1).neighbors
     for (i = 0; i < neighbors.length; ++i) {
       neighbor = neighbors[i]
 
@@ -549,10 +619,206 @@ function findPathConnect (startX, startY, endX, endY, grid) {
   var endBubbles = []
   var startNode = grid.getNodeAt(startX, startY)
   var endNode = grid.getNodeAt(endX, endY)
-  var currentNodeFromStart, currentNodeFromEnd, i
+  var BY_START = 1, BY_END = 2
+  var node, i
 
   var occupiedCells = this._buildOccupiedCellList(grid)
 
+  // set the `g` and `f` value of the start & end nodes to be 0
+  startNode.g = 0
+  startNode.f = 0
+  endNode.g = 0
+  endNode.f = 0
+
+  // push the start node into the start open list
+  startOpenList.push(startNode)
+  startNode.opened = true
+  startNode.by = BY_START
+  startNodeMap.set(key(startNode), startNode)
+
+  // push the end node into the end open list
+  endOpenList.push(endNode)
+  endNode.opened = true
+  endNode.by = BY_END
+  endNodeMap.set(key(endNode), endNode)
+
+  // while the open lists are not empty
+  while (!startOpenList.empty() && !endOpenList.empty()) {
+    // START EXPANSION
+    // pop the position of node which has the minimum `f` value.
+    node = startOpenList.pop()
+
+    // lazy deletion: skip nodes already closed
+    if (!node.closed) {
+      node.closed = true
+
+      var radius = this.signedDistanceAt(node.x, node.y, grid, occupiedCells)
+      radius = Math.floor(radius)
+      console.log('Expanding bubble at', node.x, node.y, 'with radius', radius)
+      var bubble = new Bubble(node.x, node.y, radius)
+      startBubbles.push(bubble)
+
+      // if reached the end position, construct the path and return it
+      if (bubbleContains(bubble, endNode)) {
+        console.log('End node is within bubble, connecting directly to end node')
+        // calculate the path to the end node,
+        var viaNodes = cellsWithinRadius(startNodeMap, node.x, node.y, radius)
+        viaNodes.push(node) // also consider the current node as a via candidate
+        var bestCost = Infinity
+        for (i = 0; i < viaNodes.length; i++) {
+          var via = viaNodes[i]
+          var dist = Math.hypot(via.x - endNode.x, via.y - endNode.y)
+          var total = via.g + dist
+          if (total < bestCost) {
+            bestCost = total
+            endNode.parent = via
+            endNode.g = total
+            endNode.h = 0
+            endNode.f = total
+            endNode.bubble_idx = startBubbles.length - 1
+          }
+        }
+        endNode.opened = true
+        startOpenList.push(endNode)
+        startNodeMap.set(key(endNode), endNode)
+      }
+
+      // get neigbours of the current node
+      results = this.expandAndUpdateBoundary(endX, endY, grid, startNodeMap, startBubbles, node, radius, startBubbles.length - 1)
+      neighbors = results.neighbors
+      for (i = 0; i < neighbors.length; ++i) {
+        neighbor = neighbors[i]
+
+        if (neighbor.closed) {
+          continue
+        }
+
+        x = neighbor.x
+        y = neighbor.y
+        if (!neighbor.opened) {
+          startOpenList.push(neighbor)
+          neighbor.opened = true
+          neighbor.by = BY_START
+          startNodeMap.set(key(neighbor), neighbor)
+        } else {
+          // the neighbor can be reached with smaller cost.
+          // Since its f value has been updated, we have to
+          // update its position in the open list
+          startOpenList.updateItem(neighbor)
+        }
+      } // end for each neighbor
+
+      // Prevent infinite loop by putting a cap on max iterations (should be enough for any reasonable path)
+      if (endNode.parent == startNode) {
+        startNode.parent = undefined
+        return Util.backtrace(endNode)
+      }
+
+      // Check for meeting in the middle by seeing if any neighbor is already opened by the other search direction
+      if (results.intersection) {
+        console.log('Meeting in the middle detected! (BY_START)')
+        var connection = this.findConnection(results.intersection, startNodeMap, endNodeMap, startNode, endNode)
+        if (connection) {
+          var path = Util.biBacktrace(connection.viaStart, connection.viaEnd)
+          if (connection.viaStart == startNode && connection.viaEnd == endNode) {
+            path.pop() // remove duplicate end node
+          }
+          // Print the path for debugging
+          for (i = 0; i < path.length; i++) {
+            console.log('Path node:', path[i][0], path[i][1])
+          }
+          return path
+        }
+        console.warn('Connection failed to find a valid via node pair, continuing search')
+      }
+    }
+
+    // END EXPANSION
+    // pop the position of node which has the minimum `f` value.
+    node = endOpenList.pop()
+
+    // lazy deletion: skip nodes already closed
+    if (!node.closed) {
+      node.closed = true
+
+      var radius = this.signedDistanceAt(node.x, node.y, grid, occupiedCells)
+      radius = Math.floor(radius)
+      console.log('Expanding bubble at', node.x, node.y, 'with radius', radius)
+      var bubble = new Bubble(node.x, node.y, radius)
+      endBubbles.push(bubble)
+
+      // if reached the end position, construct the path and return it
+      if (bubbleContains(bubble, startNode)) {
+        console.log('Start node is within bubble, connecting directly to start node')
+        // calculate the path to the start node,
+        var viaNodes = cellsWithinRadius(endNodeMap, node.x, node.y, radius)
+        viaNodes.push(node) // also consider the current node as a via candidate
+        var bestCost = Infinity
+        for (i = 0; i < viaNodes.length; i++) {
+          var via = viaNodes[i]
+          var dist = Math.hypot(via.x - startNode.x, via.y - startNode.y)
+          var total = via.g + dist
+          if (total < bestCost) {
+            bestCost = total
+            startNode.parent = via
+            startNode.g = total
+            startNode.h = 0
+            startNode.f = total
+            startNode.bubble_idx = endBubbles.length - 1
+          }
+        }
+        startNode.opened = true
+        endOpenList.push(startNode)
+        endNodeMap.set(key(startNode), startNode)
+      }
+
+      // get neigbours of the current node
+      results = this.expandAndUpdateBoundary(startX, startY, grid, endNodeMap, endBubbles, node, radius, endBubbles.length - 1)
+      neighbors = results.neighbors
+      for (i = 0; i < neighbors.length; ++i) {
+        neighbor = neighbors[i]
+
+        if (neighbor.closed) {
+          continue
+        }
+
+        x = neighbor.x
+        y = neighbor.y
+        if (!neighbor.opened) {
+          endOpenList.push(neighbor)
+          neighbor.opened = true
+          neighbor.by = BY_END
+          endNodeMap.set(key(neighbor), neighbor)
+        } else {
+          // the neighbor can be reached with smaller cost.
+          // Since its f value has been updated, we have to
+          // update its position in the open list
+          endOpenList.updateItem(neighbor)
+        }
+      } // end for each neighbor
+
+      // Check for meeting in the middle by seeing if any neighbor is already opened by the other search direction
+      if (results.intersection) {
+        console.log('Meeting in the middle detected! (BY_END)')
+        var connection = this.findConnection(results.intersection, startNodeMap, endNodeMap, startNode, endNode)
+        if (connection) {
+          var path = Util.biBacktrace(connection.viaStart, connection.viaEnd)
+          if (connection.viaStart == startNode && connection.viaEnd == endNode) {
+            path.pop() // remove duplicate end node
+          }
+          // Print the path for debugging
+          for (i = 0; i < path.length; i++) {
+            console.log('Path node:', path[i][0], path[i][1])
+          }
+          return path
+        }
+        console.warn('Connection failed to find a valid via node pair, continuing search')
+      }
+    }
+
+  } // end while not open list empty
+
+  // fail to find the path
   return []
 }
 
