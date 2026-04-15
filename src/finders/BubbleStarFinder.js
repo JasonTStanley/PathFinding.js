@@ -460,7 +460,8 @@ BubbleStarFinder.prototype.findConnection = function (intersection, startNodeMap
 
   // Base case: if the intersection is the base case where the end node is reachable through the start node's bubble.
   if (intersection.baseCase) {
-    viaNodesEnd = [endNode]
+    if (endNodeMap.has(key(startNode))) { viaNodesStart = [startNode] }
+    if (!startNodeMap.has(key(endNode)) && !endNodeMap.has(key(startNode))) { viaNodesEnd = [endNode] }
   }
 
   // If either side has no candidate around the intersecting bubble, skip safely.
