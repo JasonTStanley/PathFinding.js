@@ -296,7 +296,7 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function (
       // Only for Bi-directional: track which boundary (start vs end) sees this neighbor, for meeting-in-the-middle detection
       if (neighbor.by != node.by && neighbor.by) {
         console.log('Neighbor', neighbor.x, neighbor.y, 'already opened by', neighbor.by, 'at bubble idx', neighbor.bubble_idx, 'now also seen by', node.by, 'at bubble idx', bubble_idx)
-        intersection = { bubble: bubbles[bubble_idx] }
+        intersection = { bubble: bubbles[bubble_idx], baseCase: true }
       }
 
       neighbor.g = node.g + stepCost
@@ -448,20 +448,20 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function (
 }
 
 BubbleStarFinder.prototype.findConnection = function (intersection, startNodeMap, endNodeMap, startNode, endNode) {
-  if (startNodeMap.has(key(endNode)) || endNodeMap.has(key(startNode))) {
-    console.log('Direct connection found between start and end nodes!')
-    return { viaStart: startNode, viaEnd: endNode }
-  }
+  var bubble = intersection.bubble
 
-  var intersectBubble = intersection.bubble
-
-  if (!intersectBubble) {
+  if (!bubble) {
     return null
   }
 
   // Candidate "via" nodes near current node — use OPEN set within r
-  var viaNodesStart = cellsWithinRadius(startNodeMap, intersectBubble.x, intersectBubble.y, intersectBubble.radius)
-  var viaNodesEnd = cellsWithinRadius(endNodeMap, intersectBubble.x, intersectBubble.y, intersectBubble.radius)
+  var viaNodesStart = cellsWithinRadius(startNodeMap, bubble.x, bubble.y, bubble.radius)
+  var viaNodesEnd = cellsWithinRadius(endNodeMap, bubble.x, bubble.y, bubble.radius)
+
+  // Base case: if the intersection is the base case where the end node is reachable through the start node's bubble.
+  if (intersection.baseCase) {
+    viaNodesEnd = [endNode]
+  }
 
   // If either side has no candidate around the intersecting bubble, skip safely.
   if (viaNodesStart.length === 0 || viaNodesEnd.length === 0) {
@@ -710,7 +710,6 @@ function findPathConnect (startX, startY, endX, endY, grid) {
 
       // Prevent infinite loop by putting a cap on max iterations (should be enough for any reasonable path)
       if (endNode.parent == startNode) {
-        startNode.parent = undefined
         return Util.backtrace(endNode)
       }
 
@@ -720,9 +719,6 @@ function findPathConnect (startX, startY, endX, endY, grid) {
         var connection = this.findConnection(results.intersection, startNodeMap, endNodeMap, startNode, endNode)
         if (connection) {
           var path = Util.biBacktrace(connection.viaStart, connection.viaEnd)
-          if (connection.viaStart == startNode && connection.viaEnd == endNode) {
-            path.pop() // remove duplicate end node
-          }
           // Print the path for debugging
           for (i = 0; i < path.length; i++) {
             console.log('Path node:', path[i][0], path[i][1])
@@ -803,9 +799,6 @@ function findPathConnect (startX, startY, endX, endY, grid) {
         var connection = this.findConnection(results.intersection, startNodeMap, endNodeMap, startNode, endNode)
         if (connection) {
           var path = Util.biBacktrace(connection.viaStart, connection.viaEnd)
-          if (connection.viaStart == startNode && connection.viaEnd == endNode) {
-            path.pop() // remove duplicate end node
-          }
           // Print the path for debugging
           for (i = 0; i < path.length; i++) {
             console.log('Path node:', path[i][0], path[i][1])
