@@ -91,7 +91,7 @@ BubbleStarFinder.prototype.signedDistanceAt = function(
     occupiedCells = occupiedCells || this._buildOccupiedCellList(grid);
 
     // distance to map boundary, if you want to keep treating outside-grid as obstacle
-    //TODO: this has an error i think, if we are against the boundary the sdf value should be 1/2.
+    // TODO: this has an error i think, if we are against the boundary the sdf value should be 1/2.
     // also we should maybe compute the sdf exactly for completeness.
     nearest = Math.min(
         Math.min(x + 1, grid.width - x),
@@ -197,20 +197,7 @@ function cellsWithinRadius(nodeMap, qx, qy, r) {
     var out = [];
     for (var dx = -r; dx <= r; dx++) {
         for (var dy = -r; dy <= r; dy++) {
-            if (dx * dx + dy * dy > r2) continue; // keep circle
-            var n = nodeMap.get(key(qx + dx, qy + dy));
-            if (n) out.push(n);
-        }
-    }
-    return out;
-}
-
-function cellsWithinRadiusNIC(nodeMap, qx, qy, r) {
-    var r2 = r * r;
-    var out = [];
-    for (var dx = -r; dx <= r; dx++) {
-        for (var dy = -r; dy <= r; dy++) {
-            if (dx * dx + dy * dy >= r2) continue; // keep circle
+            if (dx * dx + dy * dy >= r2) continue; // keep circle, exclusive of boundary
             var n = nodeMap.get(key(qx + dx, qy + dy));
             if (n) out.push(n);
         }
@@ -403,7 +390,7 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function(
         var neighbor = grid.getNodeAt(nx, ny);
 
         // Only for Bi-directional: track which boundary (start vs end) sees this neighbor, for meeting-in-the-middle detection
-        if (neighbor.by && node.by != neighbor.by) {
+        if (neighbor.by && neighbor.by != node.by) {
             console.log(
                 "Neighbor",
                 neighbor.x,
@@ -462,53 +449,19 @@ BubbleStarFinder.prototype.findConnection = function(
         bubble.y,
         bubble.radius
     );
-    var viaNodesStartNIC = cellsWithinRadiusNIC(
-        startNodeMap,
-        bubble.x,
-        bubble.y,
-        bubble.radius
-    );
-    var viaNodesEndNIC = cellsWithinRadiusNIC(
-        endNodeMap,
-        bubble.x,
-        bubble.y,
-        bubble.radius
-    );
+
     // Base case: if the intersection is the base case where the end node is reachable through the start node's bubble.
     if (intersection.baseCase) {
-        if (endNodeMap.has(key(startNode))) {
-            viaNodesStart = [startNode];
-        }
         if (!startNodeMap.has(key(endNode)) && !endNodeMap.has(key(startNode))) {
+            console.log("Base case 2: bubbles intersect without containing one another's node");
             viaNodesEnd = [endNode];
         }
     }
 
-    // If either side has no candidate around the intersecting bubble, skip safely.
-    if (viaNodesStartNIC.length === 0 || viaNodesEndNIC.length === 0) {
-        console.log(
-            "Jason said this is impossible, he clearly doesn't know what he's talking about"
-        );
-        if (viaNodesStart.length === 0 || viaNodesEnd.length === 0) {
-            return null;
-        } else {
-            console.log("DIFFERENCE IN INCLUSIVITY")
-        }
-
-    }
-
-    var bestViaStart = viaNodesStart[0];
-    var bestViaEnd = viaNodesEnd[0];
-    var bestCost =
-        viaNodesStart[0].g +
-        viaNodesEnd[0].g +
-        Math.hypot(
-            viaNodesStart[0].x - viaNodesEnd[0].x,
-            viaNodesStart[0].y - viaNodesEnd[0].y
-        );
-
-    for (var j = 1; j < viaNodesStart.length; j++) {
-        for (var k = 1; k < viaNodesEnd.length; k++) {
+    var bestViaStart, bestViaEnd;
+    var bestCost = Infinity;
+    for (var j = 0; j < viaNodesStart.length; j++) {
+        for (var k = 0; k < viaNodesEnd.length; k++) {
             var viaStart = viaNodesStart[j];
             var viaEnd = viaNodesEnd[k];
 
@@ -706,31 +659,23 @@ function findPathConnect(startX, startY, endX, endY, grid) {
             var bubble = new Bubble(node.x, node.y, radius);
             startBubbles.push(bubble);
 
+            // TODO: break for base case where end node is reachable within the start node's bubble, to avoid unnecessary expansion on the end side.
             // if reached the end position, construct the path and return it
             if (bubbleContains(bubble, endNode)) {
                 console.log(
-                    "End node is within bubble, connecting directly to end node"
+                    "Base case 0: End node is within 1st Start bubble, connecting directly to end node"
                 );
                 // calculate the path to the end node,
-                var viaNodes = cellsWithinRadius(startNodeMap, node.x, node.y, radius);
-                viaNodes.push(node); // also consider the current node as a via candidate
-                var bestCost = Infinity;
-                for (i = 0; i < viaNodes.length; i++) {
-                    var via = viaNodes[i];
-                    var dist = Math.hypot(via.x - endNode.x, via.y - endNode.y);
-                    var total = via.g + dist;
-                    if (total < bestCost) {
-                        bestCost = total;
-                        endNode.parent = via;
-                        endNode.g = total;
-                        endNode.h = 0;
-                        endNode.f = total;
-                        endNode.bubble_idx = startBubbles.length - 1;
-                    }
-                }
+                total = startNode.g + Math.hypot(node.x - endNode.x, node.y - endNode.y);
+                endNode.parent = startNode;
+                endNode.g = total;
+                endNode.h = 0;
+                endNode.f = total;
+                endNode.bubble_idx = startBubbles.length - 1;
                 endNode.opened = true;
                 startOpenList.push(endNode);
                 startNodeMap.set(key(endNode), endNode);
+                return Util.backtrace(endNode);
             }
 
             // get neigbours of the current node
@@ -766,11 +711,6 @@ function findPathConnect(startX, startY, endX, endY, grid) {
                     startOpenList.updateItem(neighbor);
                 }
             } // end for each neighbor
-
-            // Prevent infinite loop by putting a cap on max iterations (should be enough for any reasonable path)
-            if (endNode.parent == startNode) {
-                return Util.backtrace(endNode);
-            }
 
             // Check for meeting in the middle by seeing if any neighbor is already opened by the other search direction
             if (results.intersection) {
@@ -810,31 +750,21 @@ function findPathConnect(startX, startY, endX, endY, grid) {
             var bubble = new Bubble(node.x, node.y, radius);
             endBubbles.push(bubble);
 
-            // if reached the end position, construct the path and return it
             if (bubbleContains(bubble, startNode)) {
                 console.log(
-                    "Start node is within bubble, connecting directly to start node"
+                    "Base case 1: Start node is within 1st End bubble, connecting directly to start node"
                 );
-                // calculate the path to the start node,
-                var viaNodes = cellsWithinRadius(endNodeMap, node.x, node.y, radius);
-                viaNodes.push(node); // also consider the current node as a via candidate
-                var bestCost = Infinity;
-                for (i = 0; i < viaNodes.length; i++) {
-                    var via = viaNodes[i];
-                    var dist = Math.hypot(via.x - startNode.x, via.y - startNode.y);
-                    var total = via.g + dist;
-                    if (total < bestCost) {
-                        bestCost = total;
-                        startNode.parent = via;
-                        startNode.g = total;
-                        startNode.h = 0;
-                        startNode.f = total;
-                        startNode.bubble_idx = endBubbles.length - 1;
-                    }
-                }
+                // calculate the path to the end node,
+                total = endNode.g + Math.hypot(node.x - endNode.x, node.y - endNode.y);
+                startNode.parent = endNode;
+                startNode.g = total;
+                startNode.h = 0;
+                startNode.f = total;
+                startNode.bubble_idx = endBubbles.length - 1;
                 startNode.opened = true;
-                endOpenList.push(startNode);
-                endNodeMap.set(key(startNode), startNode);
+                startOpenList.push(endNode);
+                startNodeMap.set(key(endNode), endNode);
+                return Util.backtrace(startNode);
             }
 
             // get neigbours of the current node
