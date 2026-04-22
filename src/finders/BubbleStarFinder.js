@@ -167,11 +167,11 @@ function diskBoundaryOffsets(radius, consider_diagonal) {
         for (var y = lo; y < hi; y++) {
             var p2 = x * x + y * y;
 
-            // inside test: strictly inside
+            // inside test: inside or on
             if (p2 > R2) continue;
             if (x === 0 && y === 0) continue;
 
-            // boundary test: any 8-neighbor outside (or on) the circle
+            // boundary test: any 8-neighbor strictly outside the circle
             var isBoundary = false;
             for (var i = 0; i < N.length; i++) {
                 var nx = x + N[i][0];
@@ -197,7 +197,7 @@ function cellsWithinRadius(nodeMap, qx, qy, r) {
     var out = [];
     for (var dx = -r; dx <= r; dx++) {
         for (var dy = -r; dy <= r; dy++) {
-            if (dx * dx + dy * dy >= r2) continue; // keep circle, exclusive of boundary
+            if (dx * dx + dy * dy > r2) continue; // keep circle, inclusive of boundary
             var n = nodeMap.get(key(qx + dx, qy + dy));
             if (n) out.push(n);
         }
