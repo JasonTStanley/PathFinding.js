@@ -701,24 +701,6 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
             var bubble = new Bubble(node.x, node.y, radius);
             startBubbles.push(bubble);
 
-            // Base case 0: if the end node is reachable through the start node's bubble.
-            // if (!node.parent && bubbleContains(bubble, endNode)) {
-            //     console.log(
-            //         "Base case 0: End node is within 1st Start bubble, connecting directly to end node"
-            //     );
-            //     // calculate the path to the end node,
-            //     total = startNode.g + Math.hypot(node.x - endNode.x, node.y - endNode.y);
-            //     endNode.parent = startNode;
-            //     endNode.g = total;
-            //     endNode.h = 0;
-            //     endNode.f = total;
-            //     endNode.bubble_idx = startBubbles.length - 1;
-            //     endNode.opened = true;
-            //     startOpenList.push(endNode);
-            //     startNodeMap.set(key(endNode), endNode);
-            //     return Util.backtrace(endNode);
-            // }
-
             // get neigbours of the current node
             results = this.expandAndUpdateBoundary(
                 endX,
@@ -790,24 +772,6 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
             console.log("Expanding bubble at", node.x, node.y, "with radius", radius);
             var bubble = new Bubble(node.x, node.y, radius);
             endBubbles.push(bubble);
-
-            // Base case 1: if the start node is reachable through the end node's bubble.
-            // if (!node.parent && bubbleContains(bubble, startNode)) {
-            //     console.log(
-            //         "Base case 1: Start node is within 1st End bubble, connecting directly to start node"
-            //     );
-            //     // calculate the path to the end node,
-            //     total = endNode.g + Math.hypot(node.x - endNode.x, node.y - endNode.y);
-            //     startNode.parent = endNode;
-            //     startNode.g = total;
-            //     startNode.h = 0;
-            //     startNode.f = total;
-            //     startNode.bubble_idx = endBubbles.length - 1;
-            //     startNode.opened = true;
-            //     startOpenList.push(endNode);
-            //     startNodeMap.set(key(endNode), endNode);
-            //     return Util.backtrace(startNode);
-            // }
 
             // get neigbours of the current node
             results = this.expandAndUpdateBoundary(
