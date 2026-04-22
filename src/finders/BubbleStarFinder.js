@@ -579,70 +579,69 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
             return Util.backtrace(endNode);
         }
 
-        if (node.closed) {
+        if (!node.closed) {
             // lazy deletion: skip nodes already closed
-            continue;
-        }
-        node.closed = true;
+            node.closed = true;
 
-        var radius = this.signedDistanceAt(node.x, node.y, grid, occupiedCells);
-        radius = Math.floor(radius);
-        console.log("Expanding bubble at", node.x, node.y, "with radius", radius);
-        var bubble = new Bubble(node.x, node.y, radius);
-        bubbles.push(bubble);
+            var radius = this.signedDistanceAt(node.x, node.y, grid, occupiedCells);
+            radius = Math.floor(radius);
+            console.log("Expanding bubble at", node.x, node.y, "with radius", radius);
+            var bubble = new Bubble(node.x, node.y, radius);
+            bubbles.push(bubble);
 
-        // if reached the end position, construct the path and return it
-        if (bubbleContains(bubble, endNode)) {
-            console.log("End node is within bubble, connecting directly to end node");
-            // calculate the path to the end node,
-            var viaNodes = cellsWithinRadius(nodeMap, node.x, node.y, radius);
-            viaNodes.push(node); // also consider the current node as a via candidate
-            var bestCost = Infinity;
-            for (i = 0; i < viaNodes.length; i++) {
-                var via = viaNodes[i];
-                var dist = Math.hypot(via.x - endNode.x, via.y - endNode.y);
-                var total = via.g + dist;
-                if (total < bestCost) {
-                    bestCost = total;
-                    endNode.parent = via;
-                    endNode.g = total;
-                    endNode.h = 0;
-                    endNode.f = total;
-                    endNode.bubble_idx = bubbles.length - 1;
+            // if reached the end position, construct the path and return it
+            if (bubbleContains(bubble, endNode)) {
+                console.log("End node is within bubble, connecting directly to end node");
+                // calculate the path to the end node,
+                var viaNodes = cellsWithinRadius(nodeMap, node.x, node.y, radius);
+                viaNodes.push(node); // also consider the current node as a via candidate
+                var bestCost = Infinity;
+                for (i = 0; i < viaNodes.length; i++) {
+                    var via = viaNodes[i];
+                    var dist = Math.hypot(via.x - endNode.x, via.y - endNode.y);
+                    var total = via.g + dist;
+                    if (total < bestCost) {
+                        bestCost = total;
+                        endNode.parent = via;
+                        endNode.g = total;
+                        endNode.h = 0;
+                        endNode.f = total;
+                        endNode.bubble_idx = bubbles.length - 1;
+                    }
                 }
+                endNode.opened = true;
+                openList.push(endNode);
+                nodeMap.set(key(endNode), endNode); // TODO: added because Bi-directional also has this, but not needed
             }
-            endNode.opened = true;
-            openList.push(endNode);
-            nodeMap.set(key(endNode), endNode); // TODO: added because Bi-directional also has this, but not needed
+
+            // get neigbours of the current node
+            neighbors = expandAndUpdateBoundary(
+                node,
+                radius,
+                bubbles.length - 1
+            ).neighbors;
+            for (i = 0; i < neighbors.length; ++i) {
+                neighbor = neighbors[i];
+
+                if (neighbor.closed) {
+                    continue;
+                }
+
+                x = neighbor.x;
+                y = neighbor.y;
+                if (!neighbor.opened) {
+                    openList.push(neighbor);
+                    neighbor.opened = true;
+                    nodeMap.set(key(neighbor), neighbor);
+                } else {
+                    // the neighbor can be reached with smaller cost.
+                    // Since its f value has been updated, we have to
+                    // update its position in the open list
+                    openList.updateItem(neighbor);
+                }
+            } // end for each neighbor
+            //nodeMap.delete(key(node))
         }
-
-        // get neigbours of the current node
-        neighbors = expandAndUpdateBoundary(
-            node,
-            radius,
-            bubbles.length - 1
-        ).neighbors;
-        for (i = 0; i < neighbors.length; ++i) {
-            neighbor = neighbors[i];
-
-            if (neighbor.closed) {
-                continue;
-            }
-
-            x = neighbor.x;
-            y = neighbor.y;
-            if (!neighbor.opened) {
-                openList.push(neighbor);
-                neighbor.opened = true;
-                nodeMap.set(key(neighbor), neighbor);
-            } else {
-                // the neighbor can be reached with smaller cost.
-                // Since its f value has been updated, we have to
-                // update its position in the open list
-                openList.updateItem(neighbor);
-            }
-        } // end for each neighbor
-        //nodeMap.delete(key(node))
     } // end while not open list empty
 
     // fail to find the path
