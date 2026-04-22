@@ -281,7 +281,7 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function(
 
     if (radius < 0.5) return { neighbors: neighbors };
 
-    // "sphereEdge" in 2D => your disk boundary offsets for integer radius r
+    // "sphereEdge" in 2D -> your disk boundary offsets for integer radius r
     var edge = diskBoundaryOffsets(radius, considerDiagonal); // returns Array<[dx,dy]>
 
     // Base case: no parent
@@ -362,7 +362,7 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function(
                 var bx = nx - b.x;
                 var by = ny - b.y;
                 var b_rad = b.radius;
-                if (bx * bx + by * by < b_rad * b_rad) {
+                if (bx * bx + by * by <= b_rad * b_rad) {
                     insideViaBubble = true;
                     break;
                 }
