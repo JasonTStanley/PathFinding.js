@@ -490,14 +490,6 @@ BubbleStarFinder.prototype.findConnection = function(
         viaNodesStart.push(startNode); // consider the start node as a via candidate
     }
 
-    // // Case 2: if the intersection is the case where the end node is reachable through the start node's bubble.
-    // if (!startNodeMap.has(key(endNode)) && !endNodeMap.has(key(startNode))) {
-    //     console.log("Base case 2: bubbles intersect without containing one another's node");
-    //     var tmp = viaNodesStart;
-    //     viaNodesStart = viaNodesEnd;
-    //     viaNodesEnd = tmp;
-    // }
-
     var bestViaStart, bestViaEnd;
     var bestCost = Infinity;
     for (var j = 0; j < viaNodesStart.length; j++) {
@@ -519,6 +511,15 @@ BubbleStarFinder.prototype.findConnection = function(
             }
         }
     }
+
+    // cellsWithinRadius() excludes boundary cells with >= r * r, so very small bubbles, especially radius 0 or 1, can produce no valid via candidates
+    if (!bestViaStart || !bestViaEnd) {
+        console.warn(
+            "Connection failed to find a valid via node pair, this should be rare. Returning null to continue search."
+        );
+        return null;
+    }
+
     return { viaStart: bestViaStart, viaEnd: bestViaEnd };
 };
 
