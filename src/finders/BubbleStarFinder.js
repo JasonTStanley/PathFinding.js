@@ -218,6 +218,29 @@ function bubbleContains(bubble, node) {
     return distance_sq <= bubble.radius * bubble.radius;
 }
 
+function checkIntersects(node, neighbor) {
+    // Implementation for checking intersection between a node and its neighbor
+    // Only for Bi-directional: track which boundary (start vs end) sees this neighbor, for meeting-in-the-middle detection
+    if (neighbor.by && neighbor.by != node.by) {
+        console.log(
+            "Neighbor",
+            neighbor.x,
+            neighbor.y,
+            "already opened by",
+            neighbor.by,
+            "at bubble idx",
+            neighbor.bubble_idx,
+            "now also seen by",
+            node.by,
+            "at bubble idx",
+            bubble_idx
+        );
+        intersection = { bubble: bubbles[bubble_idx] };
+        return intersection;
+    }
+    return null;
+}
+
 BubbleStarFinder.prototype.estimateHeuristic = function(goalX, goalY, x, y) {
     return this.weight * this.heuristic(Math.abs(x - goalX), Math.abs(y - goalY));
 };
@@ -273,7 +296,6 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function(
             stepCost = Math.hypot(dx, dy);
             var neighbor = grid.getNodeAt(nx0, ny0);
 
-            // TODO
             // Only for Bi-directional: track which boundary (start vs end) sees this neighbor, for meeting-in-the-middle detection
             if (neighbor.by && neighbor.by != node.by) {
                 console.log(
@@ -289,7 +311,8 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function(
                     "at bubble idx",
                     bubble_idx
                 );
-                intersection = { bubble: bubbles[bubble_idx], baseCase: true };
+                intersection = { bubble: bubbles[bubble_idx] };
+                break;
             }
 
             neighbor.g = node.g + stepCost;
@@ -450,13 +473,29 @@ BubbleStarFinder.prototype.findConnection = function(
         bubble.radius
     );
 
-    // Base case: if the intersection is the base case where the end node is reachable through the start node's bubble.
-    if (intersection.baseCase) {
-        if (!startNodeMap.has(key(endNode)) && !endNodeMap.has(key(startNode))) {
-            console.log("Base case 2: bubbles intersect without containing one another's node");
-            viaNodesEnd = [endNode];
-        }
+    // Case 0: if the end node is reachable through the bubble.
+    if (bubbleContains(bubble, endNode)) {
+        console.log(
+            "Case 0: End node is within latest bubble"
+        );
+        viaNodesEnd.push(endNode); // consider the end node as a via candidate
     }
+
+    // Case 1: if the start node is reachable through the bubble.
+    if (bubbleContains(bubble, startNode)) {
+        console.log(
+            "Case 1: Start node is within the latest bubble"
+        );
+        viaNodesStart.push(startNode); // consider the start node as a via candidate
+    }
+
+    // // Case 2: if the intersection is the case where the end node is reachable through the start node's bubble.
+    // if (!startNodeMap.has(key(endNode)) && !endNodeMap.has(key(startNode))) {
+    //     console.log("Base case 2: bubbles intersect without containing one another's node");
+    //     var tmp = viaNodesStart;
+    //     viaNodesStart = viaNodesEnd;
+    //     viaNodesEnd = tmp;
+    // }
 
     var bestViaStart, bestViaEnd;
     var bestCost = Infinity;
@@ -607,7 +646,7 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
     return [];
 };
 
-function findPathConnect(startX, startY, endX, endY, grid) {
+BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, endY, grid) {
     var cmp = function(a, b) {
         return a.f - b.f;
     };
@@ -659,24 +698,23 @@ function findPathConnect(startX, startY, endX, endY, grid) {
             var bubble = new Bubble(node.x, node.y, radius);
             startBubbles.push(bubble);
 
-            // TODO: break for base case where end node is reachable within the start node's bubble, to avoid unnecessary expansion on the end side.
-            // if reached the end position, construct the path and return it
-            if (bubbleContains(bubble, endNode)) {
-                console.log(
-                    "Base case 0: End node is within 1st Start bubble, connecting directly to end node"
-                );
-                // calculate the path to the end node,
-                total = startNode.g + Math.hypot(node.x - endNode.x, node.y - endNode.y);
-                endNode.parent = startNode;
-                endNode.g = total;
-                endNode.h = 0;
-                endNode.f = total;
-                endNode.bubble_idx = startBubbles.length - 1;
-                endNode.opened = true;
-                startOpenList.push(endNode);
-                startNodeMap.set(key(endNode), endNode);
-                return Util.backtrace(endNode);
-            }
+            // Base case 0: if the end node is reachable through the start node's bubble.
+            // if (!node.parent && bubbleContains(bubble, endNode)) {
+            //     console.log(
+            //         "Base case 0: End node is within 1st Start bubble, connecting directly to end node"
+            //     );
+            //     // calculate the path to the end node,
+            //     total = startNode.g + Math.hypot(node.x - endNode.x, node.y - endNode.y);
+            //     endNode.parent = startNode;
+            //     endNode.g = total;
+            //     endNode.h = 0;
+            //     endNode.f = total;
+            //     endNode.bubble_idx = startBubbles.length - 1;
+            //     endNode.opened = true;
+            //     startOpenList.push(endNode);
+            //     startNodeMap.set(key(endNode), endNode);
+            //     return Util.backtrace(endNode);
+            // }
 
             // get neigbours of the current node
             results = this.expandAndUpdateBoundary(
@@ -750,22 +788,23 @@ function findPathConnect(startX, startY, endX, endY, grid) {
             var bubble = new Bubble(node.x, node.y, radius);
             endBubbles.push(bubble);
 
-            if (bubbleContains(bubble, startNode)) {
-                console.log(
-                    "Base case 1: Start node is within 1st End bubble, connecting directly to start node"
-                );
-                // calculate the path to the end node,
-                total = endNode.g + Math.hypot(node.x - endNode.x, node.y - endNode.y);
-                startNode.parent = endNode;
-                startNode.g = total;
-                startNode.h = 0;
-                startNode.f = total;
-                startNode.bubble_idx = endBubbles.length - 1;
-                startNode.opened = true;
-                startOpenList.push(endNode);
-                startNodeMap.set(key(endNode), endNode);
-                return Util.backtrace(startNode);
-            }
+            // Base case 1: if the start node is reachable through the end node's bubble.
+            // if (!node.parent && bubbleContains(bubble, startNode)) {
+            //     console.log(
+            //         "Base case 1: Start node is within 1st End bubble, connecting directly to start node"
+            //     );
+            //     // calculate the path to the end node,
+            //     total = endNode.g + Math.hypot(node.x - endNode.x, node.y - endNode.y);
+            //     startNode.parent = endNode;
+            //     startNode.g = total;
+            //     startNode.h = 0;
+            //     startNode.f = total;
+            //     startNode.bubble_idx = endBubbles.length - 1;
+            //     startNode.opened = true;
+            //     startOpenList.push(endNode);
+            //     startNodeMap.set(key(endNode), endNode);
+            //     return Util.backtrace(startNode);
+            // }
 
             // get neigbours of the current node
             results = this.expandAndUpdateBoundary(
@@ -838,7 +877,7 @@ BubbleStarFinder.prototype.findPath = function(
     grid
 ) {
     if (this.connect) {
-        return findPathConnect.call(this, startX, startY, endX, endY, grid);
+        return this.findPathConnect.call(this, startX, startY, endX, endY, grid);
     }
     return this.findPathOneDirection.call(this, startX, startY, endX, endY, grid);
 };
