@@ -589,31 +589,6 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
             var bubble = new Bubble(node.x, node.y, radius);
             bubbles.push(bubble);
 
-            // if reached the end position, construct the path and return it
-            if (bubbleContains(bubble, endNode)) {
-                console.log("End node is within bubble, connecting directly to end node");
-                // calculate the path to the end node,
-                var viaNodes = cellsWithinRadius(nodeMap, node.x, node.y, radius);
-                viaNodes.push(node); // also consider the current node as a via candidate
-                var bestCost = Infinity;
-                for (i = 0; i < viaNodes.length; i++) {
-                    var via = viaNodes[i];
-                    var dist = Math.hypot(via.x - endNode.x, via.y - endNode.y);
-                    var total = via.g + dist;
-                    if (total < bestCost) {
-                        bestCost = total;
-                        endNode.parent = via;
-                        endNode.g = total;
-                        endNode.h = 0;
-                        endNode.f = total;
-                        endNode.bubble_idx = bubbles.length - 1;
-                    }
-                }
-                endNode.opened = true;
-                openList.push(endNode);
-                nodeMap.set(key(endNode), endNode); // TODO: added because Bi-directional also has this, but not needed
-            }
-
             // get neigbours of the current node
             neighbors = expandAndUpdateBoundary(
                 node,
@@ -640,6 +615,33 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
                     openList.updateItem(neighbor);
                 }
             } // end for each neighbor
+
+            // TODO: Refactored after the expansion for readability
+            // if reached the end position, construct the path and return it
+            if (bubbleContains(bubble, endNode)) {
+                console.log("End node is within bubble, connecting directly to end node");
+                // calculate the path to the end node,
+                var viaNodes = cellsWithinRadius(nodeMap, node.x, node.y, radius);
+                viaNodes.push(node); // also consider the current node as a via candidate
+                var bestCost = Infinity;
+                for (i = 0; i < viaNodes.length; i++) {
+                    var via = viaNodes[i];
+                    var dist = Math.hypot(via.x - endNode.x, via.y - endNode.y);
+                    var total = via.g + dist;
+                    if (total < bestCost) {
+                        bestCost = total;
+                        endNode.parent = via;
+                        endNode.g = total;
+                        endNode.h = 0;
+                        endNode.f = total;
+                        endNode.bubble_idx = bubbles.length - 1;
+                    }
+                }
+                endNode.opened = true;
+                openList.push(endNode);
+                nodeMap.set(key(endNode), endNode); // TODO: added because Bi-directional also has this, but not needed
+            }
+
             //nodeMap.delete(key(node))
         }
     } // end while not open list empty
