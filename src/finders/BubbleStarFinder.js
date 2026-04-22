@@ -512,6 +512,7 @@ BubbleStarFinder.prototype.findConnection = function(
         }
     }
 
+    // TODO:
     // cellsWithinRadius() excludes boundary cells with >= r * r, so very small bubbles, especially radius 0 or 1, can produce no valid via candidates
     if (!bestViaStart || !bestViaEnd) {
         console.warn(
