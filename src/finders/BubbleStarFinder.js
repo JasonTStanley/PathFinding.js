@@ -218,6 +218,7 @@ function bubbleContains(bubble, node) {
     return distance_sq <= bubble.radius * bubble.radius;
 }
 
+// TODO
 function checkIntersects(node, neighbor) {
     // Implementation for checking intersection between a node and its neighbor
     // Only for Bi-directional: track which boundary (start vs end) sees this neighbor, for meeting-in-the-middle detection
