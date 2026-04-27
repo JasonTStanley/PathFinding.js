@@ -131,11 +131,15 @@ function key(node) {
     return node + "," + arguments[1];
 }
 
+// TODO: Inclusive Check
+function checkDistance(dx, dy, radius) {
+    var distance_sq = dx * dx + dy * dy;
+    return distance_sq <= radius * radius;
+}
+
 function diskBoundaryOffsets(radius, consider_diagonal) {
     var out = [];
     if (radius <= 0) return out;
-
-    var R2 = radius * radius;
 
     // 8-neighborhood
     var N;
@@ -165,20 +169,18 @@ function diskBoundaryOffsets(radius, consider_diagonal) {
 
     for (var x = lo; x < hi; x++) {
         for (var y = lo; y < hi; y++) {
-            var p2 = x * x + y * y;
-
-            // inside test: inside or on
-            if (p2 > R2) continue;
+            // inside test: if outside the radius, skip this cell
+            if (!checkDistance(x, y, radius)) continue;
+            // skip the center cell
             if (x === 0 && y === 0) continue;
 
-            // boundary test: any 8-neighbor strictly outside the circle
+            // boundary test: any 8-neighbor outside the circle
             var isBoundary = false;
             for (var i = 0; i < N.length; i++) {
                 var nx = x + N[i][0];
                 var ny = y + N[i][1];
-                var q2 = nx * nx + ny * ny;
-
-                if (q2 > R2) {
+                // if any neighbor is outside the radius, then this is a boundary cell
+                if (!checkDistance(nx, ny, radius)) {
                     isBoundary = true;
                     break;
                 }
@@ -193,11 +195,10 @@ function diskBoundaryOffsets(radius, consider_diagonal) {
 }
 
 function cellsWithinRadius(nodeMap, qx, qy, r) {
-    var r2 = r * r;
     var out = [];
     for (var dx = -r; dx <= r; dx++) {
         for (var dy = -r; dy <= r; dy++) {
-            if (dx * dx + dy * dy > r2) continue; // keep circle, inclusive of boundary
+            if (!checkDistance(dx, dy, r)) continue;
             var n = nodeMap.get(key(qx + dx, qy + dy));
             if (n) out.push(n);
         }
@@ -214,8 +215,7 @@ function Bubble(x, y, radius) {
 function bubbleContains(bubble, node) {
     var dx = node.x - bubble.x;
     var dy = node.y - bubble.y;
-    var distance_sq = dx * dx + dy * dy;
-    return distance_sq <= bubble.radius * bubble.radius;
+    return checkDistance(dx, dy, bubble.radius);
 }
 
 // TODO
@@ -361,8 +361,7 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function(
                 var b = viaBubbles[j];
                 var bx = nx - b.x;
                 var by = ny - b.y;
-                var b_rad = b.radius;
-                if (bx * bx + by * by <= b_rad * b_rad) {
+                if (checkDistance(bx, by, b.radius)) {
                     insideViaBubble = true;
                     break;
                 }
