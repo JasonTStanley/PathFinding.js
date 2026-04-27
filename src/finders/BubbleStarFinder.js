@@ -51,75 +51,6 @@ function BubbleStarFinder(opt) {
     }
 }
 
-BubbleStarFinder.prototype._buildOccupiedCellList = function(grid) {
-    var occupied = [];
-    var x;
-    var y;
-
-    for (x = 0; x < grid.width; ++x) {
-        for (y = 0; y < grid.height; ++y) {
-            if (!grid.isWalkableAt(x, y)) {
-                occupied.push([x, y]);
-            }
-        }
-    }
-
-    return occupied;
-};
-
-BubbleStarFinder.prototype.signedDistanceAt = function(
-    x,
-    y,
-    grid,
-    occupiedCells
-) {
-    var nearest;
-    var i;
-    var cx;
-    var cy;
-    var qx;
-    var qy;
-    var outside;
-    var inside;
-    var dist;
-    var h = 0.5;
-
-    if (!grid.isInside(x, y)) {
-        return 0;
-    }
-
-    occupiedCells = occupiedCells || this._buildOccupiedCellList(grid);
-
-    // distance to map boundary, if you want to keep treating outside-grid as obstacle
-    // TODO: this has an error i think, if we are against the boundary the sdf value should be 1/2.
-    // also we should maybe compute the sdf exactly for completeness.
-    nearest = Math.min(
-        Math.min(x + 1, grid.width - x),
-        Math.min(y + 1, grid.height - y)
-    );
-
-    for (i = 0; i < occupiedCells.length; ++i) {
-        cx = occupiedCells[i][0];
-        cy = occupiedCells[i][1];
-
-        qx = Math.abs(x - cx) - h;
-        qy = Math.abs(y - cy) - h;
-
-        outside = Math.sqrt(
-            Math.max(qx, 0) * Math.max(qx, 0) + Math.max(qy, 0) * Math.max(qy, 0)
-        );
-        inside = Math.min(Math.max(qx, qy), 0);
-
-        dist = outside + inside;
-
-        if (dist < nearest) {
-            nearest = dist;
-        }
-    }
-
-    return nearest;
-};
-
 function canMoveDiagonally(diagonalMovement) {
     return diagonalMovement !== DiagonalMovement.Never;
 }
@@ -241,6 +172,75 @@ function checkIntersects(node, neighbor) {
     }
     return null;
 }
+
+BubbleStarFinder.prototype._buildOccupiedCellList = function(grid) {
+    var occupied = [];
+    var x;
+    var y;
+
+    for (x = 0; x < grid.width; ++x) {
+        for (y = 0; y < grid.height; ++y) {
+            if (!grid.isWalkableAt(x, y)) {
+                occupied.push([x, y]);
+            }
+        }
+    }
+
+    return occupied;
+};
+
+BubbleStarFinder.prototype.signedDistanceAt = function(
+    x,
+    y,
+    grid,
+    occupiedCells
+) {
+    var nearest;
+    var i;
+    var cx;
+    var cy;
+    var qx;
+    var qy;
+    var outside;
+    var inside;
+    var dist;
+    var h = 0.5;
+
+    if (!grid.isInside(x, y)) {
+        return 0;
+    }
+
+    occupiedCells = occupiedCells || this._buildOccupiedCellList(grid);
+
+    // distance to map boundary, if you want to keep treating outside-grid as obstacle
+    // TODO: this has an error i think, if we are against the boundary the sdf value should be 1/2.
+    // also we should maybe compute the sdf exactly for completeness.
+    nearest = Math.min(
+        Math.min(x + 1, grid.width - x),
+        Math.min(y + 1, grid.height - y)
+    );
+
+    for (i = 0; i < occupiedCells.length; ++i) {
+        cx = occupiedCells[i][0];
+        cy = occupiedCells[i][1];
+
+        qx = Math.abs(x - cx) - h;
+        qy = Math.abs(y - cy) - h;
+
+        outside = Math.sqrt(
+            Math.max(qx, 0) * Math.max(qx, 0) + Math.max(qy, 0) * Math.max(qy, 0)
+        );
+        inside = Math.min(Math.max(qx, qy), 0);
+
+        dist = outside + inside;
+
+        if (dist < nearest) {
+            nearest = dist;
+        }
+    }
+
+    return nearest;
+};
 
 BubbleStarFinder.prototype.estimateHeuristic = function(goalX, goalY, x, y) {
     return this.weight * this.heuristic(Math.abs(x - goalX), Math.abs(y - goalY));
