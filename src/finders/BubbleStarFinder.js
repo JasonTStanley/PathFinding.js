@@ -288,20 +288,20 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function(
         for (i = 0; i < edge.length; i++) {
             dx = edge[i][0];
             dy = edge[i][1];
-            var nx0 = node.x + dx;
-            var ny0 = node.y + dy;
-            if (!grid.isInside(nx0, ny0) || !grid.isWalkableAt(nx0, ny0)) {
-                continue;
-            }
+            var nx = node.x + dx;
+            var ny = node.y + dy;
+
+            if (!grid.isWalkableAt(nx, ny)) continue;
+
             stepCost = Math.hypot(dx, dy);
-            var neighbor = grid.getNodeAt(nx0, ny0);
+            var neighbor = grid.getNodeAt(nx, ny);
 
             // Only for Bi-directional: track which boundary (start vs end) sees this neighbor, for meeting-in-the-middle detection
             event.bubble_overlap = findOverlap(node, neighbor, bubbles, bubble_idx);
             if (event.bubble_overlap) break;
 
             neighbor.g = node.g + stepCost;
-            neighbor.h = neighbor.h || estimateHeuristic(nx0, ny0);
+            neighbor.h = neighbor.h || estimateHeuristic(nx, ny);
             neighbor.f = neighbor.g + neighbor.h;
             neighbor.parent = node;
             neighbor.bubble_idx = bubble_idx;
@@ -358,9 +358,8 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function(
         edge = filteredEdge;
     }
 
-    var N = edge.length;
-
-    if (N === 0) {
+    // Process Filtered edge:
+    if (edge.length === 0) {
         console.warn(
             "Bubble* warning: all edge neighbors were inside via bubbles, skipping this bubble",
             radius,
@@ -371,18 +370,16 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function(
     }
 
     // For each edge step, choose best via: min_j (via.cost + dist(via.pos, next))
-    for (i = 0; i < N; i++) {
+    for (i = 0; i < edge.length; i++) {
         dx = edge[i][0];
         dy = edge[i][1];
         nx = node.x + dx;
         ny = node.y + dy;
-        if (!grid.isInside(nx, ny) || !grid.isWalkableAt(nx, ny)) {
-            continue;
-        }
-
+        
+        if (!grid.isWalkableAt(nx, ny)) continue;
+        
         var bestVia = viaNodes[0];
         var bestCost = Infinity;
-
         for (j = 0; j < K; j++) {
             var v = viaNodes[j];
             var dist = Math.hypot(v.x - nx, v.y - ny);
