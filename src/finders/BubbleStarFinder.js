@@ -417,8 +417,8 @@ BubbleStarFinder.prototype.calculateSuccessors = function(
 
 BubbleStarFinder.prototype.resolveOverlap = function(
     bubbleOverlap,
-    startNodeMap,
-    endNodeMap,
+    forwardNodeMap,
+    backwardNodeMap,
     startNode,
     endNode
 ) {
@@ -430,13 +430,13 @@ BubbleStarFinder.prototype.resolveOverlap = function(
 
     // Candidate "via" nodes near current node — use OPEN set within r
     var viaNodesStart = findVias(
-        startNodeMap,
+        forwardNodeMap,
         bubble.x,
         bubble.y,
         bubble.radius
     );
     var viaNodesEnd = findVias(
-        endNodeMap,
+        backwardNodeMap,
         bubble.x,
         bubble.y,
         bubble.radius
@@ -508,15 +508,6 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
     var startNode = grid.getNodeAt(startX, startY);
     var endNode = grid.getNodeAt(endX, endY);
 
-    var calculateSuccessors = this.calculateSuccessors.bind(
-        this,
-        event,
-        endX,
-        endY,
-        grid,
-        nodeMap,
-        bubbles
-    );
     var node, i;
 
     var occupiedCells = this._buildOccupiedCellList(grid);
@@ -535,22 +526,16 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
         // pop the position of node which has the minimum `f` value.
         node = openList.pop();
         if (node === endNode) {
-            var tmp = node;
-            while (tmp.parent) {
-                console.log(
-                    "Path node:",
-                    tmp.x,
-                    tmp.y,
-                    "via bubble idx",
-                    tmp.bubble_idx
-                );
-                tmp = tmp.parent;
+            var path = Util.backtrace(endNode);
+            // Print the path for debugging
+            for (i = 0; i < path.length; i++) {
+                console.log("Path node:", path[i][0], path[i][1]);
             }
-            return Util.backtrace(endNode);
+            return path;
         }
 
+        // lazy deletion: skip nodes already closed
         if (!node.closed) {
-            // lazy deletion: skip nodes already closed
             node.closed = true;
 
             var radius = this.signedDistanceAt(node.x, node.y, grid, occupiedCells);
@@ -560,7 +545,17 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
             bubbles.push(bubble);
 
             // get neigbours of the current node
-            neighbors = calculateSuccessors(node, radius, bubbles.length - 1);
+            neighbors = this.calculateSuccessors(
+                event,
+                endX,
+                endY,
+                grid,
+                nodeMap,
+                bubbles,
+                node,
+                radius,
+                bubbles.length - 1
+            );
             for (i = 0; i < neighbors.length; ++i) {
                 neighbor = neighbors[i];
 
@@ -621,12 +616,12 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
     var cmp = function(a, b) {
         return a.f - b.f;
     };
-    var startOpenList = new Heap(cmp);
-    var endOpenList = new Heap(cmp);
-    var startNodeMap = new Map();
-    var endNodeMap = new Map();
-    var startBubbles = [];
-    var endBubbles = [];
+    var forwardOpenList = new Heap(cmp);
+    var backwardOpenList = new Heap(cmp);
+    var forwardNodeMap = new Map();
+    var backwardNodeMap = new Map();
+    var forwardBubbles = [];
+    var backwardBubbles = [];
     var startNode = grid.getNodeAt(startX, startY);
     var endNode = grid.getNodeAt(endX, endY);
     var BY_START = 1,
@@ -643,22 +638,22 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
     endNode.f = 0;
 
     // push the start node into the start open list
-    startOpenList.push(startNode);
+    forwardOpenList.push(startNode);
     startNode.opened = true;
     startNode.by = BY_START;
-    startNodeMap.set(key(startNode), startNode);
+    forwardNodeMap.set(key(startNode), startNode);
 
     // push the end node into the end open list
-    endOpenList.push(endNode);
+    backwardOpenList.push(endNode);
     endNode.opened = true;
     endNode.by = BY_END;
-    endNodeMap.set(key(endNode), endNode);
+    backwardNodeMap.set(key(endNode), endNode);
 
     // while the open lists are not empty
-    while (!startOpenList.empty() && !endOpenList.empty()) {
+    while (!forwardOpenList.empty() && !backwardOpenList.empty()) {
         // FORWARD EXPANSION
         // pop the position of node which has the minimum `f` value.
-        node = startOpenList.pop();
+        node = forwardOpenList.pop();
 
         // lazy deletion: skip nodes already closed
         if (!node.closed) {
@@ -668,7 +663,7 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
             radius = Math.floor(radius);
             console.log("Expanding bubble at", node.x, node.y, "with radius", radius);
             var bubble = new Bubble(node.x, node.y, radius);
-            startBubbles.push(bubble);
+            forwardBubbles.push(bubble);
 
             // get neigbours of the current node
             neighbors = this.calculateSuccessors(
@@ -676,11 +671,11 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
                 endX,
                 endY,
                 grid,
-                startNodeMap,
-                startBubbles,
+                forwardNodeMap,
+                forwardBubbles,
                 node,
                 radius,
-                startBubbles.length - 1
+                forwardBubbles.length - 1
             );
             for (i = 0; i < neighbors.length; ++i) {
                 neighbor = neighbors[i];
@@ -692,15 +687,15 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
                 x = neighbor.x;
                 y = neighbor.y;
                 if (!neighbor.opened) {
-                    startOpenList.push(neighbor);
+                    forwardOpenList.push(neighbor);
                     neighbor.opened = true;
                     neighbor.by = BY_START;
-                    startNodeMap.set(key(neighbor), neighbor);
+                    forwardNodeMap.set(key(neighbor), neighbor);
                 } else {
                     // the neighbor can be reached with smaller cost.
                     // Since its f value has been updated, we have to
                     // update its position in the open list
-                    startOpenList.updateItem(neighbor);
+                    forwardOpenList.updateItem(neighbor);
                 }
             } // end for each neighbor
 
@@ -709,8 +704,8 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
                 console.log("Meeting in the middle detected! (BY_START)");
                 var overlap_solution = this.resolveOverlap(
                     event.bubble_overlap,
-                    startNodeMap,
-                    endNodeMap,
+                    forwardNodeMap,
+                    backwardNodeMap,
                     startNode,
                     endNode
                 );
@@ -730,7 +725,7 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
 
         // BACKWARD EXPANSION
         // pop the position of node which has the minimum `f` value.
-        node = endOpenList.pop();
+        node = backwardOpenList.pop();
 
         // lazy deletion: skip nodes already closed
         if (!node.closed) {
@@ -740,7 +735,7 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
             radius = Math.floor(radius);
             console.log("Expanding bubble at", node.x, node.y, "with radius", radius);
             var bubble = new Bubble(node.x, node.y, radius);
-            endBubbles.push(bubble);
+            backwardBubbles.push(bubble);
 
             // get neigbours of the current node
             neighbors = this.calculateSuccessors(
@@ -748,11 +743,11 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
                 startX,
                 startY,
                 grid,
-                endNodeMap,
-                endBubbles,
+                backwardNodeMap,
+                backwardBubbles,
                 node,
                 radius,
-                endBubbles.length - 1
+                backwardBubbles.length - 1
             );
             for (i = 0; i < neighbors.length; ++i) {
                 neighbor = neighbors[i];
@@ -764,15 +759,15 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
                 x = neighbor.x;
                 y = neighbor.y;
                 if (!neighbor.opened) {
-                    endOpenList.push(neighbor);
+                    backwardOpenList.push(neighbor);
                     neighbor.opened = true;
                     neighbor.by = BY_END;
-                    endNodeMap.set(key(neighbor), neighbor);
+                    backwardNodeMap.set(key(neighbor), neighbor);
                 } else {
                     // the neighbor can be reached with smaller cost.
                     // Since its f value has been updated, we have to
                     // update its position in the open list
-                    endOpenList.updateItem(neighbor);
+                    backwardOpenList.updateItem(neighbor);
                 }
             } // end for each neighbor
 
@@ -781,8 +776,8 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
                 console.log("Meeting in the middle detected! (BY_END)");
                 var overlap_solution = this.resolveOverlap(
                     event.bubble_overlap,
-                    startNodeMap,
-                    endNodeMap,
+                    forwardNodeMap,
+                    backwardNodeMap,
                     startNode,
                     endNode
                 );
