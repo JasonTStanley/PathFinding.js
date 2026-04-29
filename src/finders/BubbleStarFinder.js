@@ -68,7 +68,7 @@ function checkDistance(dx, dy, radius) {
     return distance_sq <= radius * radius;
 }
 
-function diskBoundaryOffsets(radius, consider_diagonal) {
+function generateSuccessorCandidates(radius, consider_diagonal) {
     var out = [];
     if (radius <= 0) return out;
 
@@ -125,7 +125,7 @@ function diskBoundaryOffsets(radius, consider_diagonal) {
     return out;
 }
 
-function cellsWithinRadius(nodeMap, qx, qy, r) {
+function findVias(nodeMap, qx, qy, r) {
     var out = [];
     for (var dx = -r; dx <= r; dx++) {
         for (var dy = -r; dy <= r; dy++) {
@@ -135,6 +135,32 @@ function cellsWithinRadius(nodeMap, qx, qy, r) {
         }
     }
     return out;
+}
+
+function cullSuccessors(edge, node, viaBubbles) {
+    var filteredEdge = [];
+    for (i = 0; i < edge.length; i++) {
+        dx = edge[i][0];
+        dy = edge[i][1];
+        var nx = node.x + dx;
+        var ny = node.y + dy;
+        var insideViaBubble = false;
+
+        for (j = 0; j < viaBubbles.length; j++) {
+            var b = viaBubbles[j];
+            var bx = nx - b.x;
+            var by = ny - b.y;
+            if (checkDistance(bx, by, b.radius)) {
+                insideViaBubble = true;
+                break;
+            }
+        }
+
+        if (!insideViaBubble) {
+            filteredEdge.push(edge[i]);
+        }
+    }
+    return filteredEdge;
 }
 
 function Bubble(x, y, radius) {
@@ -256,7 +282,7 @@ BubbleStarFinder.prototype.estimateHeuristic = function(goalX, goalY, x, y) {
  *
  * @returns {Array<Object>} neighbors nodes (new objects) with {x,y,cost,parent}
  */
-BubbleStarFinder.prototype.expandAndUpdateBoundary = function(
+BubbleStarFinder.prototype.calculateSuccessors = function(
     event,
     goalX,
     goalY,
@@ -281,7 +307,7 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function(
     if (radius < 0.5) return neighbors;
 
     // "sphereEdge" in 2D -> your disk boundary offsets for integer radius r
-    var edge = diskBoundaryOffsets(radius, considerDiagonal); // returns Array<[dx,dy]>
+    var edge = generateSuccessorCandidates(radius, considerDiagonal); // returns Array<[dx,dy]>
 
     // Base case: no parent
     if (!node.parent) {
@@ -312,7 +338,7 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function(
     }
 
     // Candidate "via" nodes near current node — use OPEN set within r
-    var viaNodes = cellsWithinRadius(nodeMap, node.x, node.y, radius);
+    var viaNodes = findVias(nodeMap, node.x, node.y, radius);
     viaNodes.push(node); // also consider the current node as a via candidate
     var K = viaNodes.length;
 
@@ -332,30 +358,8 @@ BubbleStarFinder.prototype.expandAndUpdateBoundary = function(
             }
         }
 
-        // Filter edge once
-        var filteredEdge = [];
-        for (i = 0; i < edge.length; i++) {
-            dx = edge[i][0];
-            dy = edge[i][1];
-            var nx = node.x + dx;
-            var ny = node.y + dy;
-            var insideViaBubble = false;
-
-            for (j = 0; j < viaBubbles.length; j++) {
-                var b = viaBubbles[j];
-                var bx = nx - b.x;
-                var by = ny - b.y;
-                if (checkDistance(bx, by, b.radius)) {
-                    insideViaBubble = true;
-                    break;
-                }
-            }
-
-            if (!insideViaBubble) {
-                filteredEdge.push(edge[i]);
-            }
-        }
-        edge = filteredEdge;
+        // Filter edge once based on via bubbles, to avoid redundant checks for each via candidate.
+        edge = cullSuccessors(edge, node, viaBubbles);
     }
 
     // Process Filtered edge:
@@ -425,13 +429,13 @@ BubbleStarFinder.prototype.resolveOverlap = function(
     }
 
     // Candidate "via" nodes near current node — use OPEN set within r
-    var viaNodesStart = cellsWithinRadius(
+    var viaNodesStart = findVias(
         startNodeMap,
         bubble.x,
         bubble.y,
         bubble.radius
     );
-    var viaNodesEnd = cellsWithinRadius(
+    var viaNodesEnd = findVias(
         endNodeMap,
         bubble.x,
         bubble.y,
@@ -476,8 +480,7 @@ BubbleStarFinder.prototype.resolveOverlap = function(
         }
     }
 
-    // TODO:
-    // cellsWithinRadius() excludes boundary cells with >= r * r, so very small bubbles, especially radius 0 or 1, can produce no valid via candidates
+    // TODO: A Fallback check, may be unnecessary if the bubble overlap check is strict enough
     if (!bestViaStart || !bestViaEnd) {
         console.warn(
             "Connection failed to find a valid via node pair, this should be rare. Returning null to continue search."
@@ -496,24 +499,25 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
     grid
 ) {
     var event = {}; // for tracking info during expansion
-    var openList = new Heap(function(nodeA, nodeB) {
-        return nodeA.f - nodeB.f;
-    }),
-        nodeMap = new Map(),
-        bubbles = [],
-        startNode = grid.getNodeAt(startX, startY),
-        endNode = grid.getNodeAt(endX, endY),
-        expandAndUpdateBoundary = this.expandAndUpdateBoundary.bind(
-            this,
-            event,
-            endX,
-            endY,
-            grid,
-            nodeMap,
-            bubbles
-        ),
-        node,
-        i;
+    var cmp = function(a, b) {
+        return a.f - b.f;
+    };
+    var openList = new Heap(cmp);
+    var nodeMap = new Map();
+    var bubbles = [];
+    var startNode = grid.getNodeAt(startX, startY);
+    var endNode = grid.getNodeAt(endX, endY);
+
+    var calculateSuccessors = this.calculateSuccessors.bind(
+        this,
+        event,
+        endX,
+        endY,
+        grid,
+        nodeMap,
+        bubbles
+    );
+    var node, i;
 
     var occupiedCells = this._buildOccupiedCellList(grid);
 
@@ -556,7 +560,7 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
             bubbles.push(bubble);
 
             // get neigbours of the current node
-            neighbors = expandAndUpdateBoundary(node, radius, bubbles.length - 1);
+            neighbors = calculateSuccessors(node, radius, bubbles.length - 1);
             for (i = 0; i < neighbors.length; ++i) {
                 neighbor = neighbors[i];
 
@@ -583,7 +587,7 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
             if (bubbleContains(bubble, endNode)) {
                 console.log("End node is within bubble, connecting directly to end node");
                 // calculate the path to the end node,
-                var viaNodes = cellsWithinRadius(nodeMap, node.x, node.y, radius);
+                var viaNodes = findVias(nodeMap, node.x, node.y, radius);
                 viaNodes.push(node); // also consider the current node as a via candidate
                 var bestCost = Infinity;
                 for (i = 0; i < viaNodes.length; i++) {
@@ -627,6 +631,7 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
     var endNode = grid.getNodeAt(endX, endY);
     var BY_START = 1,
         BY_END = 2;
+
     var node, i;
 
     var occupiedCells = this._buildOccupiedCellList(grid);
@@ -651,7 +656,7 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
 
     // while the open lists are not empty
     while (!startOpenList.empty() && !endOpenList.empty()) {
-        // START EXPANSION
+        // FORWARD EXPANSION
         // pop the position of node which has the minimum `f` value.
         node = startOpenList.pop();
 
@@ -666,7 +671,7 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
             startBubbles.push(bubble);
 
             // get neigbours of the current node
-            neighbors = this.expandAndUpdateBoundary(
+            neighbors = this.calculateSuccessors(
                 event,
                 endX,
                 endY,
@@ -723,7 +728,7 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
             }
         }
 
-        // END EXPANSION
+        // BACKWARD EXPANSION
         // pop the position of node which has the minimum `f` value.
         node = endOpenList.pop();
 
@@ -738,7 +743,7 @@ BubbleStarFinder.prototype.findPathConnect = function (startX, startY, endX, end
             endBubbles.push(bubble);
 
             // get neigbours of the current node
-            neighbors = this.expandAndUpdateBoundary(
+            neighbors = this.calculateSuccessors(
                 event,
                 startX,
                 startY,
