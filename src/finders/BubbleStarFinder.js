@@ -139,14 +139,14 @@ function findVias(nodeMap, qx, qy, r) {
 
 function cullSuccessors(edge, node, viaBubbles) {
     var filteredEdge = [];
-    for (i = 0; i < edge.length; i++) {
-        dx = edge[i][0];
-        dy = edge[i][1];
+    for (var i = 0; i < edge.length; i++) {
+        var dx = edge[i][0];
+        var dy = edge[i][1];
         var nx = node.x + dx;
         var ny = node.y + dy;
         var insideViaBubble = false;
 
-        for (j = 0; j < viaBubbles.length; j++) {
+        for (var j = 0; j < viaBubbles.length; j++) {
             var b = viaBubbles[j];
             var bx = nx - b.x;
             var by = ny - b.y;
@@ -175,27 +175,38 @@ function bubbleContains(bubble, node) {
     return checkDistance(dx, dy, bubble.radius);
 }
 
-// TODO
-function findOverlap(node, neighbor, bubbles, bubble_idx) {
-    // Implementation for checking overlap between a node and its neighbor
+function findOverlap(node, successors, bubbles, bubble_idx) {
+    // Implementation for checking overlap between a node and its successors
     // Only for Bi-directional: track which boundary (start vs end) sees this neighbor, for meeting-in-the-middle detection
-    if (neighbor.by && neighbor.by != node.by) {
-        console.log(
-            "Neighbor",
-            neighbor.x,
-            neighbor.y,
-            "already opened by",
-            neighbor.by,
-            "at bubble idx",
-            neighbor.bubble_idx,
-            "now also seen by",
-            node.by,
-            "at bubble idx",
-            bubble_idx
-        );
-        return bubbles[bubble_idx]; // return the bubble that caused the overlap for connection finding
+    var bubble_overlap = null;
+    var filteredSuccessors = [];
+    var i, neighbor;
+    for (i = 0; i < successors.length; ++i) {
+        neighbor = successors[i].neighbor;
+        if (neighbor.by && neighbor.by != node.by) {
+            // if this neighbor is already opened by the other search direction, we have a meeting in the middle! Track the bubble that caused this for connection finding.
+            console.log(
+                "Neighbor",
+                neighbor.x,
+                neighbor.y,
+                "already opened by",
+                neighbor.by,
+                "at bubble idx",
+                neighbor.bubble_idx,
+                "now also seen by",
+                node.by,
+                "at bubble idx",
+                bubble_idx
+            );
+            bubble_overlap = bubbles[bubble_idx];
+        } else {
+            // if not, keep this successor for normal processing
+            filteredSuccessors.push(successors[i]);
+        }
     }
-    return null;
+    // Note: reassigning the local parameter won't affect the caller's reference.
+    // If callers need filtered successors they should use the returned bubble and the existing successors array.
+    return { successors: filteredSuccessors, bubble_overlap: bubble_overlap };
 }
 
 BubbleStarFinder.prototype._buildOccupiedCellList = function(grid) {
@@ -272,7 +283,7 @@ BubbleStarFinder.prototype.estimateHeuristic = function(goalX, goalY, x, y) {
 };
 
 /**
- * Compute neighbors for Bubble* expansion from a node.
+ * Compute successors for Bubble* expansion from a node.
  *
  * @param {number} goalX        Goal x (for heuristic)
  * @param {number} goalY        Goal y (for heuristic)
@@ -280,21 +291,17 @@ BubbleStarFinder.prototype.estimateHeuristic = function(goalX, goalY, x, y) {
  * @param {number} radius        Radius in world units OR grid units depending on resolution
  * @param {number} bubble_idx    Index of the bubble being expanded (for book-keeping)
  *
- * @returns {Array<Object>} neighbors nodes (new objects) with {x,y,cost,parent}
+ * @returns {Array<Object>} successors nodes (new objects) with {x,y,cost,parent}
  */
 BubbleStarFinder.prototype.calculateSuccessors = function(
-    goalX,
-    goalY,
     grid,
     nodeMap,
     bubbles,
     node,
-    radius,
-    bubble_idx
+    radius
 ) {
     var successors = [];
     var considerDiagonal = canMoveDiagonally(this.diagonalMovement);
-    var estimateHeuristic = this.estimateHeuristic.bind(this, goalX, goalY);
     var i;
     var j;
     var dx;
@@ -321,16 +328,8 @@ BubbleStarFinder.prototype.calculateSuccessors = function(
             stepCost = Math.hypot(dx, dy);
             var neighbor = grid.getNodeAt(nx, ny);
 
-            // Only for Bi-directional: track which boundary (start vs end) sees this neighbor, for meeting-in-the-middle detection
-            //event.bubble_overlap = findOverlap(node, neighbor, bubbles, bubble_idx);
-            //if (event.bubble_overlap) break;
-
-            //neighbor.g = node.g + stepCost;
-            //neighbor.h = neighbor.h || estimateHeuristic(nx, ny);
-            //neighbor.f = neighbor.g + neighbor.h;
-            //neighbor.parent = node;
-            //neighbor.bubble_idx = bubble_idx;
-            successors.push({ neighbor: neighbor, bestVia: node, bestCost: stepCost });
+            // TODO: neighbor.h = neighbor.h || estimateHeuristic(nx, ny);
+            successors.push({ neighbor: neighbor, bestVia: node, bestCost: node.g + stepCost });
         }
         nodeMap.delete(key(node));
         return successors;
@@ -364,12 +363,12 @@ BubbleStarFinder.prototype.calculateSuccessors = function(
     // Process Filtered edge:
     if (edge.length === 0) {
         console.warn(
-            "Bubble* warning: all edge neighbors were inside via bubbles, skipping this bubble",
+            "Bubble* warning: all edge successors were inside via bubbles, skipping this bubble",
             radius,
             node.x,
             node.y
         );
-        return { neighbors: neighbors };
+        return successors;
     }
 
 
@@ -399,12 +398,6 @@ BubbleStarFinder.prototype.calculateSuccessors = function(
 
         var successor = { neighbor: neighbor, bestVia: bestVia, bestCost: bestCost };
         successors.push(successor);
-
-
-        // Only for Bi-directional: track which boundary (start vs end) sees this neighbor, for meeting-in-the-middle detection
-        //event.bubble_overlap = findOverlap(node, neighbor, bubbles, bubble_idx);
-        //if (event.bubble_overlap) break;
-
     }
 
     return successors;
@@ -486,6 +479,23 @@ BubbleStarFinder.prototype.resolveOverlap = function(
     return { viaStart: bestViaStart, viaEnd: bestViaEnd };
 };
 
+BubbleStarFinder.prototype.handleEndCondition = function(
+    node,
+    successors,
+    bubbles,
+    bubble_idx
+) {
+    // Implementation for handling end condition
+    
+    // Bi-directional Only
+    if (node.by) {
+        // Check for meeting in the middle by seeing if any successor is already opened by the other search direction
+        var results = findOverlap(node, successors, bubbles, bubble_idx);
+        return { successors: results.successors, last_bubble: results.bubble_overlap };
+    }
+    return null; // if not bi-directional or no overlap, return null to continue normal processing
+};
+
 BubbleStarFinder.prototype.findPathOneDirection = function(
     startX,
     startY,
@@ -493,7 +503,6 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
     endY,
     grid
 ) {
-    var event = {}; // for tracking info during expansion
     var cmp = function(a, b) {
         return a.f - b.f;
     };
@@ -503,7 +512,7 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
     var startNode = grid.getNodeAt(startX, startY);
     var endNode = grid.getNodeAt(endX, endY);
 
-    var node, i;
+    var node;
 
     var occupiedCells = this._buildOccupiedCellList(grid);
 
@@ -540,27 +549,18 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
             bubbles.push(bubble);
 
             // get neigbours of the current node
-            successors = this.calculateSuccessors(
-                endX,
-                endY,
-                grid,
-                nodeMap,
-                bubbles,
-                node,
-                radius,
-                bubbles.length - 1
-            );
+            var successors = this.calculateSuccessors(grid, nodeMap, bubbles, node, radius);
 
-            for (i = 0; i < successors.length; ++i) {
-                successor = successors[i];
-                neighbor = successor.neighbor;
-                bestVia = successor.bestVia;
-                bestCost = successor.bestCost;
+            for (var i = 0; i < successors.length; ++i) {
+                var successor = successors[i];
+                var neighbor = successor.neighbor;
+                var bestVia = successor.bestVia;
+                var bestCost = successor.bestCost;
 
                 if (!neighbor.opened || bestCost < neighbor.g) {
                     // check if we have a better cost and update the neighbor
                     neighbor.g = bestCost;
-                    neighbor.h = estimateHeuristic(neighbor.x, neighbor.y);
+                    neighbor.h = this.estimateHeuristic(endX, endY, neighbor.x, neighbor.y);
                     neighbor.f = neighbor.g + neighbor.h;
                     neighbor.parent = bestVia;
                     neighbor.bubble_idx = bubbles.length - 1;
@@ -572,8 +572,6 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
                     continue;
                 }
 
-                x = neighbor.x;
-                y = neighbor.y;
                 if (!neighbor.opened) {
                     openList.push(neighbor);
                     neighbor.opened = true;
@@ -609,7 +607,6 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
                 }
                 endNode.opened = true;
                 openList.push(endNode);
-                nodeMap.set(key(endNode), endNode); // TODO: added because Bi-directional also has this, but not needed
             }
 
             //nodeMap.delete(key(node))
@@ -621,7 +618,6 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
 };
 
 BubbleStarFinder.prototype.findPathConnect = function(startX, startY, endX, endY, grid) {
-    var event = {}; // for tracking info during expansion
     var cmp = function(a, b) {
         return a.f - b.f;
     };
@@ -636,7 +632,7 @@ BubbleStarFinder.prototype.findPathConnect = function(startX, startY, endX, endY
     var BY_START = 1,
         BY_END = 2;
 
-    var node, i;
+    var node;
 
     var occupiedCells = this._buildOccupiedCellList(grid);
 
@@ -675,35 +671,27 @@ BubbleStarFinder.prototype.findPathConnect = function(startX, startY, endX, endY
             forwardBubbles.push(bubble);
 
             // get neigbours of the current node
-            successors = this.calculateSuccessors(
-                endX,
-                endY,
-                grid,
-                forwardNodeMap,
-                forwardBubbles,
-                node,
-                radius,
-                forwardBubbles.length - 1
-            );
-            for (i = 0; i < successors.length; ++i) {
-                successor = successors[i];
-                neighbor = successor.neighbor;
-                bestVia = successor.bestVia;
-                bestCost = successor.bestCost;
+            var successors = this.calculateSuccessors(grid, forwardNodeMap, forwardBubbles, node, radius);
 
+            // Check for end condition: if reached the end position
+            var results = this.handleEndCondition(node, successors, forwardBubbles, forwardBubbles.length - 1);
+            var last_bubble = results.last_bubble;
+            successors = results.successors;
 
-                event.bubble_overlap = findOverlap(node, neighbor, forwardBubbles, forwardBubbles.length - 1);
-                if (event.bubble_overlap) break;
-                //event.bubble_overlap = findOverlap(node, neighbor, bubbles, bubble_idx);
-                //if (event.bubble_overlap) break;
+            // Update open list and node map for each neighbor
+            for (var i = 0; i < successors.length; ++i) {
+                var successor = successors[i];
+                var neighbor = successor.neighbor;
+                var bestVia = successor.bestVia;
+                var bestCost = successor.bestCost;
 
                 if (!neighbor.opened || bestCost < neighbor.g) {
                     // check if we have a better cost and update the neighbor
                     neighbor.g = bestCost;
-                    neighbor.h = estimateHeuristic(neighbor.x, neighbor.y);
+                    neighbor.h = this.estimateHeuristic(endX, endY, neighbor.x, neighbor.y);
                     neighbor.f = neighbor.g + neighbor.h;
                     neighbor.parent = bestVia;
-                    neighbor.bubble_idx = bubbles.length - 1;
+                    neighbor.bubble_idx = forwardBubbles.length - 1;
                 } else {
                     continue;
                 }
@@ -712,9 +700,6 @@ BubbleStarFinder.prototype.findPathConnect = function(startX, startY, endX, endY
                     continue;
                 }
 
-
-                x = neighbor.x;
-                y = neighbor.y;
                 if (!neighbor.opened) {
                     forwardOpenList.push(neighbor);
                     neighbor.opened = true;
@@ -728,11 +713,10 @@ BubbleStarFinder.prototype.findPathConnect = function(startX, startY, endX, endY
                 }
             } // end for each neighbor
 
-            // Check for meeting in the middle by seeing if any neighbor is already opened by the other search direction
-            if (event.bubble_overlap) {
-                console.log("Meeting in the middle detected! (BY_START)");
+            if (last_bubble) {
+                console.log("Meeting in the middle detected!");
                 var overlap_solution = this.resolveOverlap(
-                    event.bubble_overlap,
+                    last_bubble,
                     forwardNodeMap,
                     backwardNodeMap,
                     startNode,
@@ -741,7 +725,7 @@ BubbleStarFinder.prototype.findPathConnect = function(startX, startY, endX, endY
                 if (overlap_solution) {
                     var path = Util.biBacktrace(overlap_solution.viaStart, overlap_solution.viaEnd);
                     // Print the path for debugging
-                    for (i = 0; i < path.length; i++) {
+                    for (var i = 0; i < path.length; i++) {
                         console.log("Path node:", path[i][0], path[i][1]);
                     }
                     return path;
@@ -749,6 +733,7 @@ BubbleStarFinder.prototype.findPathConnect = function(startX, startY, endX, endY
                 console.warn(
                     "Connection failed to find a valid via node pair, continuing search"
                 );
+                return null;
             }
         }
 
@@ -767,44 +752,35 @@ BubbleStarFinder.prototype.findPathConnect = function(startX, startY, endX, endY
             backwardBubbles.push(bubble);
 
             // get neigbours of the current node
-            successors = this.calculateSuccessors(
-                startX,
-                startY,
-                grid,
-                backwardNodeMap,
-                backwardBubbles,
-                node,
-                radius,
-                backwardBubbles.length - 1
-            );
+            var successors = this.calculateSuccessors(grid, backwardNodeMap, backwardBubbles, node, radius);
 
-            event.bubble_overlap = findOverlap(node, neighbor, forwardBubbles, forwardBubbles.length - 1);
-            if (event.bubble_overlap) break;
+            // Check for end condition: if reached the end position
+            var results = this.handleEndCondition(node, successors, backwardBubbles, backwardBubbles.length - 1);
+            var last_bubble = results.last_bubble;
+            successors = results.successors;
 
-            for (i = 0; i < successors.length; ++i) {
-                successor = successors[i];
-                neighbor = successor.neighbor;
-                bestVia = successor.bestVia;
-                bestCost = successor.bestCost;
+            // Update open list and node map for each neighbor
+            for (var i = 0; i < successors.length; ++i) {
+                var successor = successors[i];
+                var neighbor = successor.neighbor;
+                var bestVia = successor.bestVia;
+                var bestCost = successor.bestCost;
 
                 if (!neighbor.opened || bestCost < neighbor.g) {
                     // check if we have a better cost and update the neighbor
                     neighbor.g = bestCost;
-                    neighbor.h = estimateHeuristic(neighbor.x, neighbor.y);
+                    neighbor.h = this.estimateHeuristic(startX, startY, neighbor.x, neighbor.y);
                     neighbor.f = neighbor.g + neighbor.h;
                     neighbor.parent = bestVia;
-                    neighbor.bubble_idx = bubbles.length - 1;
+                    neighbor.bubble_idx = backwardBubbles.length - 1;
                 } else {
                     continue;
                 }
-
 
                 if (neighbor.closed) {
                     continue;
                 }
 
-                x = neighbor.x;
-                y = neighbor.y;
                 if (!neighbor.opened) {
                     backwardOpenList.push(neighbor);
                     neighbor.opened = true;
@@ -818,11 +794,10 @@ BubbleStarFinder.prototype.findPathConnect = function(startX, startY, endX, endY
                 }
             } // end for each neighbor
 
-            // Check for meeting in the middle by seeing if any neighbor is already opened by the other search direction
-            if (event.bubble_overlap) {
-                console.log("Meeting in the middle detected! (BY_END)");
+            if (last_bubble) {
+                console.log("Meeting in the middle detected!");
                 var overlap_solution = this.resolveOverlap(
-                    event.bubble_overlap,
+                    last_bubble,
                     forwardNodeMap,
                     backwardNodeMap,
                     startNode,
@@ -831,7 +806,7 @@ BubbleStarFinder.prototype.findPathConnect = function(startX, startY, endX, endY
                 if (overlap_solution) {
                     var path = Util.biBacktrace(overlap_solution.viaStart, overlap_solution.viaEnd);
                     // Print the path for debugging
-                    for (i = 0; i < path.length; i++) {
+                    for (var i = 0; i < path.length; i++) {
                         console.log("Path node:", path[i][0], path[i][1]);
                     }
                     return path;
@@ -839,6 +814,7 @@ BubbleStarFinder.prototype.findPathConnect = function(startX, startY, endX, endY
                 console.warn(
                     "Connection failed to find a valid via node pair, continuing search"
                 );
+                return null;
             }
         }
     } // end while not open list empty
