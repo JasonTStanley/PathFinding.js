@@ -179,7 +179,6 @@ function findOverlap(node, successors, bubbles, bubble_idx) {
     // Implementation for checking overlap between a node and its successors
     // Only for Bi-directional: track which boundary (start vs end) sees this neighbor, for meeting-in-the-middle detection
     var bubble_overlap = null;
-    var filteredSuccessors = [];
     var i, neighbor;
     for (i = 0; i < successors.length; ++i) {
         neighbor = successors[i].neighbor;
@@ -199,14 +198,11 @@ function findOverlap(node, successors, bubbles, bubble_idx) {
                 bubble_idx
             );
             bubble_overlap = bubbles[bubble_idx];
-        } else {
-            // if not, keep this successor for normal processing
-            filteredSuccessors.push(successors[i]);
         }
     }
     // Note: reassigning the local parameter won't affect the caller's reference.
     // If callers need filtered successors they should use the returned bubble and the existing successors array.
-    return { successors: filteredSuccessors, bubble_overlap: bubble_overlap };
+    return bubble_overlap;
 }
 
 BubbleStarFinder.prototype._buildOccupiedCellList = function(grid) {
@@ -483,15 +479,65 @@ BubbleStarFinder.prototype.handleEndCondition = function(
     node,
     successors,
     bubbles,
-    bubble_idx
+    bubble_idx,
+    endNode,
+    forwardNodeMap,
+    startNode,
+    backwardNodeMap
 ) {
     // Implementation for handling end condition
+    startNode = startNode || null;
+    backwardNodeMap = backwardNodeMap || null;
     
-    // Bi-directional Only
+    // Bi-directional case: check for meeting in the middle
     if (node.by) {
         // Check for meeting in the middle by seeing if any successor is already opened by the other search direction
-        var results = findOverlap(node, successors, bubbles, bubble_idx);
-        return { successors: results.successors, last_bubble: results.bubble_overlap };
+        var last_bubble = findOverlap(node, successors, bubbles, bubble_idx);
+        if (last_bubble) {
+            console.log("Meeting in the middle detected!");
+            var overlap_solution = this.resolveOverlap(last_bubble, forwardNodeMap, backwardNodeMap, startNode, endNode);
+            if (overlap_solution) {
+                var path = Util.biBacktrace(overlap_solution.viaStart, overlap_solution.viaEnd);
+                // Print the path for debugging
+                for (var i = 0; i < path.length; i++) {
+                    console.log("Path node:", path[i][0], path[i][1]);
+                }
+                return path;
+            }
+            console.warn(
+                "Connection failed to find a valid via node pair, continuing search"
+            );
+        }
+    } else {
+        // if reached the end position, construct the path and return it
+        var last_bubble = bubbles[bubble_idx];
+        if (bubbleContains(last_bubble, endNode)) {
+            console.log("End node is within bubble, connecting directly to end node");
+            // calculate the path to the end node,
+            var viaNodes = findVias(forwardNodeMap, last_bubble.x, last_bubble.y, last_bubble.radius);
+            viaNodes.push(node); // also consider the current node as a via candidate
+            var bestCost = Infinity;
+            for (i = 0; i < viaNodes.length; i++) {
+                var via = viaNodes[i];
+                var dist = Math.hypot(via.x - endNode.x, via.y - endNode.y);
+                var total = via.g + dist;
+                if (total < bestCost) {
+                    bestCost = total;
+                    endNode.parent = via;
+                    endNode.g = total;
+                    endNode.h = 0;
+                    endNode.f = total;
+                    endNode.bubble_idx = bubbles.length - 1;
+                }
+            }
+
+            var path = Util.backtrace(endNode);
+            // Print the path for debugging
+            for (i = 0; i < path.length; i++) {
+                console.log("Path node:", path[i][0], path[i][1]);
+            }
+            return path;
+        }
     }
     return null; // if not bi-directional or no overlap, return null to continue normal processing
 };
@@ -529,14 +575,6 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
     while (!openList.empty()) {
         // pop the position of node which has the minimum `f` value.
         node = openList.pop();
-        if (node === endNode) {
-            var path = Util.backtrace(endNode);
-            // Print the path for debugging
-            for (i = 0; i < path.length; i++) {
-                console.log("Path node:", path[i][0], path[i][1]);
-            }
-            return path;
-        }
 
         // lazy deletion: skip nodes already closed
         if (!node.closed) {
@@ -550,6 +588,11 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
 
             // get neigbours of the current node
             var successors = this.calculateSuccessors(grid, nodeMap, bubbles, node, radius);
+
+            var path = this.handleEndCondition(node, successors, bubbles, bubbles.length - 1, endNode, nodeMap);
+            if (path) {
+                return path;
+            }
 
             for (var i = 0; i < successors.length; ++i) {
                 var successor = successors[i];
@@ -583,32 +626,6 @@ BubbleStarFinder.prototype.findPathOneDirection = function(
                     openList.updateItem(neighbor);
                 }
             } // end for each neighbor
-
-            // TODO: Refactored after the expansion for readability
-            // if reached the end position, construct the path and return it
-            if (bubbleContains(bubble, endNode)) {
-                console.log("End node is within bubble, connecting directly to end node");
-                // calculate the path to the end node,
-                var viaNodes = findVias(nodeMap, node.x, node.y, radius);
-                viaNodes.push(node); // also consider the current node as a via candidate
-                var bestCost = Infinity;
-                for (i = 0; i < viaNodes.length; i++) {
-                    var via = viaNodes[i];
-                    var dist = Math.hypot(via.x - endNode.x, via.y - endNode.y);
-                    var total = via.g + dist;
-                    if (total < bestCost) {
-                        bestCost = total;
-                        endNode.parent = via;
-                        endNode.g = total;
-                        endNode.h = 0;
-                        endNode.f = total;
-                        endNode.bubble_idx = bubbles.length - 1;
-                    }
-                }
-                endNode.opened = true;
-                openList.push(endNode);
-            }
-
             //nodeMap.delete(key(node))
         }
     } // end while not open list empty
@@ -674,9 +691,10 @@ BubbleStarFinder.prototype.findPathConnect = function(startX, startY, endX, endY
             var successors = this.calculateSuccessors(grid, forwardNodeMap, forwardBubbles, node, radius);
 
             // Check for end condition: if reached the end position
-            var results = this.handleEndCondition(node, successors, forwardBubbles, forwardBubbles.length - 1);
-            var last_bubble = results.last_bubble;
-            successors = results.successors;
+            var path = this.handleEndCondition(node, successors, forwardBubbles, forwardBubbles.length - 1, endNode, forwardNodeMap, startNode, backwardNodeMap);
+            if (path) {
+                return path;
+            }
 
             // Update open list and node map for each neighbor
             for (var i = 0; i < successors.length; ++i) {
@@ -712,29 +730,6 @@ BubbleStarFinder.prototype.findPathConnect = function(startX, startY, endX, endY
                     forwardOpenList.updateItem(neighbor);
                 }
             } // end for each neighbor
-
-            if (last_bubble) {
-                console.log("Meeting in the middle detected!");
-                var overlap_solution = this.resolveOverlap(
-                    last_bubble,
-                    forwardNodeMap,
-                    backwardNodeMap,
-                    startNode,
-                    endNode
-                );
-                if (overlap_solution) {
-                    var path = Util.biBacktrace(overlap_solution.viaStart, overlap_solution.viaEnd);
-                    // Print the path for debugging
-                    for (var i = 0; i < path.length; i++) {
-                        console.log("Path node:", path[i][0], path[i][1]);
-                    }
-                    return path;
-                }
-                console.warn(
-                    "Connection failed to find a valid via node pair, continuing search"
-                );
-                return null;
-            }
         }
 
         // BACKWARD EXPANSION
@@ -755,9 +750,10 @@ BubbleStarFinder.prototype.findPathConnect = function(startX, startY, endX, endY
             var successors = this.calculateSuccessors(grid, backwardNodeMap, backwardBubbles, node, radius);
 
             // Check for end condition: if reached the end position
-            var results = this.handleEndCondition(node, successors, backwardBubbles, backwardBubbles.length - 1);
-            var last_bubble = results.last_bubble;
-            successors = results.successors;
+            var path = this.handleEndCondition(node, successors, backwardBubbles, backwardBubbles.length - 1, endNode, forwardNodeMap, startNode, backwardNodeMap);
+            if (path) {
+                return path;
+            }
 
             // Update open list and node map for each neighbor
             for (var i = 0; i < successors.length; ++i) {
@@ -793,29 +789,6 @@ BubbleStarFinder.prototype.findPathConnect = function(startX, startY, endX, endY
                     backwardOpenList.updateItem(neighbor);
                 }
             } // end for each neighbor
-
-            if (last_bubble) {
-                console.log("Meeting in the middle detected!");
-                var overlap_solution = this.resolveOverlap(
-                    last_bubble,
-                    forwardNodeMap,
-                    backwardNodeMap,
-                    startNode,
-                    endNode
-                );
-                if (overlap_solution) {
-                    var path = Util.biBacktrace(overlap_solution.viaStart, overlap_solution.viaEnd);
-                    // Print the path for debugging
-                    for (var i = 0; i < path.length; i++) {
-                        console.log("Path node:", path[i][0], path[i][1]);
-                    }
-                    return path;
-                }
-                console.warn(
-                    "Connection failed to find a valid via node pair, continuing search"
-                );
-                return null;
-            }
         }
     } // end while not open list empty
 
