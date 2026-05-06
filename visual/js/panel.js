@@ -109,17 +109,27 @@ var Panel = {
             break;
         case 'bubble_star_header':
             allowDiagonal = typeof $('#bubble_star_section .allow_diagonal:checked').val() !== 'undefined';
+            biDirectional = typeof $('#bubble_star_section .bi-directional:checked').val() !== 'undefined';
             dontCrossCorners = typeof $('#bubble_star_section .dont_cross_corners:checked').val() !== 'undefined';
             weight = parseInt($('#bubble_star_section .spinner').val()) || 1;
             weight = weight >= 1 ? weight : 1;
             heuristic = $('input[name=bubble_star_heuristic]:checked').val();
 
-            finder = new PF.BubbleStarFinder({
-                allowDiagonal: allowDiagonal,
-                dontCrossCorners: dontCrossCorners,
-                heuristic: PF.Heuristic[heuristic],
-                weight: weight,
-            });
+            if (biDirectional) {
+                finder = new PF.BiBubbleStarFinder({
+                    allowDiagonal: allowDiagonal,
+                    dontCrossCorners: dontCrossCorners,
+                    heuristic: PF.Heuristic[heuristic],
+                    weight: weight,
+                });
+            } else {
+                finder = new PF.BubbleStarFinder({
+                    allowDiagonal: allowDiagonal,
+                    dontCrossCorners: dontCrossCorners,
+                    heuristic: PF.Heuristic[heuristic],
+                    weight: weight,
+                });
+            }
             break;
 
         case 'dijkstra_header':
